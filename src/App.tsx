@@ -277,6 +277,11 @@ export default function App() {
     const chapter = ebook.bab.find((b) => b.id === chapterId);
     if (!chapter) return;
 
+    if (!chapter.teks || chapter.teks.trim().length === 0) {
+      alert('Teks naskah bab ini masih kosong. Silakan tulis atau masukkan naskah terlebih dahulu.');
+      return;
+    }
+
     setGeneratingChapterId(chapterId);
     setEbook((prev) => ({
       ...prev,
@@ -328,7 +333,7 @@ export default function App() {
                 : b
             ),
           }));
-        } else if (data.canUseBrowserTTS) {
+        } else if (data.canUseBrowserTTS || data.fallbackToBrowser) {
           // Graceful fallback to browser speech synthesis
           setEbook((prev) => ({
             ...prev,

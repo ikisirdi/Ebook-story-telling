@@ -176,7 +176,15 @@ apiRouter.get('/health', (_req: Request, res: Response) => {
 // Segment text API
 apiRouter.post('/segment', async (req: Request, res: Response) => {
   try {
-    const { text, titleHint, maxWordsPerChapter } = req.body;
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        // ignore
+      }
+    }
+    const { text, titleHint, maxWordsPerChapter, apiKey: customKey } = body || {};
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
       return res.status(400).json({ error: 'Teks input wajib diisi.' });
     }
@@ -185,7 +193,11 @@ apiRouter.post('/segment', async (req: Request, res: Response) => {
     const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
 
     // Check if API key is configured
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey =
+      process.env.GEMINI_API_KEY ||
+      (req.headers['x-gemini-api-key'] as string) ||
+      customKey;
+
     if (!apiKey) {
       const fallbackResult = fallbackSegmentText(trimmed, titleHint);
       return res.json({
@@ -293,17 +305,38 @@ ${trimmed.slice(0, 80000)}
 // Text-to-Speech API
 apiRouter.post('/tts', async (req: Request, res: Response) => {
   try {
-    const { text, voice = 'Kore' } = req.body;
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {
+        // ignore
+      }
+    }
+    const { text, voice = 'Kore', apiKey: customKey } = body || {};
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
-      return res.status(400).json({ error: 'Teks untuk narasi suara wajib diisi.' });
+      return res.status(400).json({ error: 'Teks naskah untuk narasi suara masih kosong.' });
     }
 
-    const apiKey = process.env.GEMINI_API_KEY;
+    const cleanText = text.trim();
+    const apiKey =
+      process.env.GEMINI_API_KEY ||
+      (req.headers['x-gemini-api-key'] as string) ||
+      customKey;
+
     if (!apiKey) {
-      return res.status(400).json({
-        error:
-          'Kunci GEMINI_API_KEY tidak ditemukan. Anda dapat menggunakan Narasi Browser (Web Speech) atau atur API key di Vercel / Settings.',
+      console.warn(
+        '[TTS] GEMINI_API_KEY tidak ditemukan di Vercel environment variables. Mengalihkan ke Browser Web Speech.'
+      );
+      return res.json({
+        success: true,
+        audio_id: 'browser-' + randomUUID(),
+        audio_url: 'speech:browser-id-ID',
+        fallbackToBrowser: true,
         canUseBrowserTTS: true,
+        duration_seconds: Math.round((cleanText.length || 100) / 20),
+        notice:
+          'Kunci GEMINI_API_KEY belum diatur di Vercel Environment Variables. Narasi suara dialihkan otomatis ke Web Speech Browser.',
       });
     }
 
@@ -315,8 +348,6 @@ apiRouter.post('/tts', async (req: Request, res: Response) => {
         },
       },
     });
-
-    const cleanText = text.trim();
 
     // Send the narration text in ONE single call to conserve API quota
     let narrationText = cleanText;

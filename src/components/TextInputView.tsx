@@ -17,6 +17,8 @@ import {
 
 export type SplitMode =
   | 'parts_auto'
+  | 'parts_short'
+  | 'parts_medium'
   | 'parts_2'
   | 'parts_3'
   | 'parts_4'
@@ -74,12 +76,14 @@ export const TextInputView: React.FC<TextInputViewProps> = ({
     if (splitMode === 'parts_2') return 2;
     if (splitMode === 'parts_3') return 3;
     if (splitMode === 'parts_4') return 4;
-    if (splitMode === 'parts_auto') return Math.max(1, Math.round(wordCount / 650));
+    if (splitMode === 'parts_short') return Math.max(1, Math.round(wordCount / 250));
+    if (splitMode === 'parts_medium') return Math.max(1, Math.round(wordCount / 500));
+    if (splitMode === 'parts_auto') return Math.max(1, Math.round(wordCount / 350));
     if (splitMode === 'scene_break') {
       const matches = inputText.match(/\n\s*(?:\*\*\*|###|---|—{3,})\s*\n/g);
       return (matches?.length || 0) + 1;
     }
-    return Math.max(1, Math.ceil(wordCount / 1000));
+    return Math.max(1, Math.ceil(wordCount / 600));
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -239,7 +243,7 @@ export const TextInputView: React.FC<TextInputViewProps> = ({
             </div>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {/* Option 1: Bab X Part 1, Part 2 (Auto) */}
+              {/* Option 1: Bab X Part 1, Part 2 (Auto Audio ~350 kata) */}
               <button
                 type="button"
                 id="split-mode-auto"
@@ -253,15 +257,37 @@ export const TextInputView: React.FC<TextInputViewProps> = ({
                 <div className="flex items-center gap-1.5">
                   <ListOrdered className="w-3.5 h-3.5 text-amber-600 shrink-0" />
                   <span className="text-xs font-bold text-neutral-900 truncate">
-                    Bagi Part Otomatis
+                    Bagi Part Audio (Rekomendasi)
                   </span>
                 </div>
                 <p className="text-[11px] text-neutral-500 mt-1 line-clamp-1">
-                  Bab {chapterNumber} Part 1, Part 2 (~650 kata)
+                  Bab {chapterNumber} Part 1, Part 2 (~350 kata / ~2 mnt audio)
                 </p>
               </button>
 
-              {/* Option 2: Bagi 2 Part Seimbang */}
+              {/* Option 2: Part Pendek Audio (~250 kata) */}
+              <button
+                type="button"
+                id="split-mode-short"
+                onClick={() => setSplitMode('parts_short')}
+                className={`p-2.5 rounded-xl border text-left transition-all ${
+                  splitMode === 'parts_short'
+                    ? 'border-amber-600 bg-amber-50/70 ring-2 ring-amber-500/20 shadow-xs'
+                    : 'border-neutral-200 bg-white hover:border-neutral-300 text-neutral-700'
+                }`}
+              >
+                <div className="flex items-center gap-1.5">
+                  <SplitSquareVertical className="w-3.5 h-3.5 text-amber-600 shrink-0" />
+                  <span className="text-xs font-bold text-neutral-900 truncate">
+                    Part Ringkas Audio
+                  </span>
+                </div>
+                <p className="text-[11px] text-neutral-500 mt-1 line-clamp-1">
+                  ~250 kata (~1.5 mnt audio per part)
+                </p>
+              </button>
+
+              {/* Option 3: Bagi 2 Part Seimbang */}
               <button
                 type="button"
                 id="split-mode-parts2"
@@ -279,11 +305,11 @@ export const TextInputView: React.FC<TextInputViewProps> = ({
                   </span>
                 </div>
                 <p className="text-[11px] text-neutral-500 mt-1 line-clamp-1">
-                  Bab {chapterNumber} Part 1 & Part 2 seimbang
+                  Bab {chapterNumber} Part 1 & Part 2
                 </p>
               </button>
 
-              {/* Option 3: 1 Bab Utuh */}
+              {/* Option 4: 1 Bab Utuh */}
               <button
                 type="button"
                 id="split-mode-single"
@@ -301,32 +327,25 @@ export const TextInputView: React.FC<TextInputViewProps> = ({
                   </span>
                 </div>
                 <p className="text-[11px] text-neutral-500 mt-1 line-clamp-1">
-                  Seluruh teks adalah 1 bab penuh
-                </p>
-              </button>
-
-              {/* Option 4: Deteksi AI Multi-Bab */}
-              <button
-                type="button"
-                id="split-mode-ai"
-                onClick={() => setSplitMode('ai')}
-                className={`p-2.5 rounded-xl border text-left transition-all ${
-                  splitMode === 'ai'
-                    ? 'border-amber-600 bg-amber-50/70 ring-2 ring-amber-500/20 shadow-xs'
-                    : 'border-neutral-200 bg-white hover:border-neutral-300 text-neutral-700'
-                }`}
-              >
-                <div className="flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-600 shrink-0" />
-                  <span className="text-xs font-bold text-neutral-900 truncate">
-                    Deteksi AI Cerdas
-                  </span>
-                </div>
-                <p className="text-[11px] text-neutral-500 mt-1 line-clamp-1">
-                  AI membagi teks panjang multi-bab
+                  Seluruh naskah dalam 1 bab tunggal
                 </p>
               </button>
             </div>
+
+            {/* Smart Audio Advice Notice when text is long */}
+            {wordCount > 380 && (
+              <div className="mt-2.5 p-2.5 rounded-xl bg-amber-50/90 border border-amber-200 text-amber-900 text-xs flex items-start gap-2">
+                <Sparkles className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+                <div className="leading-relaxed">
+                  <strong>Tips Narasi Suara Audiobook:</strong> Naskah Anda memiliki{' '}
+                  <span className="font-bold">{wordCount} kata</span>. Pilihan{' '}
+                  <strong className="underline cursor-pointer" onClick={() => setSplitMode('parts_auto')}>
+                    "Bagi Part Audio (Rekomendasi)"
+                  </strong>{' '}
+                  akan memecah cerita Anda menjadi ~{Math.max(2, Math.round(wordCount / 350))} Part secara otomatis. Setiap Part dapat di-generate suaranya dengan durasi nyaman tanpa terpotong.
+                </div>
+              </div>
+            )}
           </div>
         </div>
 

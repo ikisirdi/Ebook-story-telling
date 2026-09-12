@@ -15,7 +15,8 @@ import {
   AlertCircle,
   Plus,
   PlusCircle,
-  RotateCcw
+  RotateCcw,
+  Scissors,
 } from 'lucide-react';
 import { ChapterData, EbookData, TTSConfig } from '../types';
 
@@ -32,6 +33,7 @@ interface ChapterManagerProps {
   ttsConfig: TTSConfig;
   onAddNewChapter?: () => void;
   onResetBook?: () => void;
+  onSplitChapterIntoParts?: (chapterId: string) => void;
 }
 
 export const ChapterManager: React.FC<ChapterManagerProps> = ({
@@ -47,6 +49,7 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
   ttsConfig,
   onAddNewChapter,
   onResetBook,
+  onSplitChapterIntoParts,
 }) => {
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
@@ -296,6 +299,19 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
                       <span className="text-xs text-neutral-400 font-medium mr-1">
                         {chapter.jumlah_kata} kata
                       </span>
+
+                      {/* Split Chapter into Parts Button */}
+                      {onSplitChapterIntoParts && chapter.jumlah_kata > 350 && (
+                        <button
+                          type="button"
+                          onClick={() => onSplitChapterIntoParts(chapter.id)}
+                          className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200 transition-colors"
+                          title={`Pecah bab ini menjadi ~${Math.max(2, Math.round(chapter.jumlah_kata / 350))} part audio otomatis`}
+                        >
+                          <Scissors className="w-3.5 h-3.5 text-amber-700" />
+                          <span>Pecah Part</span>
+                        </button>
+                      )}
 
                       {/* Audio Button */}
                       {chapter.audio_url ? (

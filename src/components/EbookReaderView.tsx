@@ -17,6 +17,9 @@ import {
   Sparkles,
   Headphones,
   RefreshCw,
+  Layers,
+  Scissors,
+  ListOrdered,
 } from 'lucide-react';
 import { ChapterData, EbookData } from '../types';
 
@@ -34,6 +37,10 @@ interface EbookReaderViewProps {
   onGenerateAudioForChapter: (chapterId: string) => Promise<void>;
   isGeneratingAudio: boolean;
   onAddNewChapter?: () => void;
+  onSplitChapterIntoParts?: (chapterId: string) => void;
+  onGenerateAllAudio?: () => Promise<void>;
+  isBatchGenerating?: boolean;
+  batchProgress?: { current: number; total: number };
 }
 
 type ThemeMode = 'light' | 'sepia' | 'dark';
@@ -53,6 +60,10 @@ export const EbookReaderView: React.FC<EbookReaderViewProps> = ({
   onGenerateAudioForChapter,
   isGeneratingAudio,
   onAddNewChapter,
+  onSplitChapterIntoParts,
+  onGenerateAllAudio,
+  isBatchGenerating,
+  batchProgress,
 }) => {
   const [theme, setTheme] = useState<ThemeMode>('light');
   const [fontMode, setFontMode] = useState<FontMode>('serif');
@@ -300,50 +311,94 @@ export const EbookReaderView: React.FC<EbookReaderViewProps> = ({
               </p>
             )}
 
-            {/* Prominent Per-Chapter Audio Play Button as per prompt */}
+            {/* Prominent Per-Chapter Audio Play Button & Part Tools */}
             <div className="flex flex-wrap items-center justify-between gap-3 pt-2">
-              <div className="text-xs opacity-60">
-                {currentChapter?.jumlah_kata} kata • ~{Math.max(1, Math.round((currentChapter?.jumlah_kata || 0) / 180))} mnt baca
+              <div className="flex flex-wrap items-center gap-2 text-xs opacity-75">
+                <span>{currentChapter?.jumlah_kata} kata</span>
+                <span>•</span>
+                <span>~{Math.max(1, Math.round((currentChapter?.jumlah_kata || 0) / 180))} mnt baca</span>
+
+                {/* Split Chapter into Parts Button */}
+                {onSplitChapterIntoParts && (currentChapter?.jumlah_kata || 0) > 350 && (
+                  <button
+                    type="button"
+                    onClick={() => onSplitChapterIntoParts(currentChapter.id)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300/60 transition-colors ml-1"
+                    title="Pecah bab panjang ini menjadi beberapa part audio otomatis (~350 kata per part)"
+                  >
+                    <Scissors className="w-3 h-3 text-amber-700" />
+                    <span>
+                      Pecah Jadi Part Suara (~{Math.max(2, Math.round((currentChapter?.jumlah_kata || 0) / 350))} Part)
+                    </span>
+                  </button>
+                )}
               </div>
 
-              {currentChapter?.audio_url ? (
-                <button
-                  id="chapter-main-play-btn"
-                  onClick={onTogglePlay}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-xs sm:text-sm font-semibold text-white bg-amber-600 hover:bg-amber-700 shadow-md transition-all transform hover:-translate-y-0.5"
-                >
-                  {isPlaying ? (
-                    <>
-                      <Pause className="w-4 h-4 fill-current" />
-                      <span>Jeda Narasi Suara Bab Ini</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-4 h-4 fill-current" />
-                      <span>Putar Narasi Suara Bab Ini</span>
-                    </>
-                  )}
-                </button>
-              ) : (
-                <button
-                  id="chapter-generate-audio-btn"
-                  onClick={() => onGenerateAudioForChapter(currentChapter.id)}
-                  disabled={isGeneratingAudio}
-                  className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold bg-neutral-200/80 hover:bg-neutral-300/80 text-neutral-800 disabled:opacity-50 transition-colors"
-                >
-                  {isGeneratingAudio ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Sedang Membuat Audio Suara...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Volume2 className="w-3.5 h-3.5 text-amber-700" />
-                      <span>Buat Narasi Suara Bab Ini</span>
-                    </>
-                  )}
-                </button>
-              )}
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Batch generate all parts if any part is missing audio */}
+                {onGenerateAllAudio && ebook.bab.some((b) => !b.audio_url) && (
+                  <button
+                    type="button"
+                    onClick={onGenerateAllAudio}
+                    disabled={isBatchGenerating}
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-full text-xs font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300/70 disabled:opacity-50 transition-colors shadow-xs"
+                    title="Buat audio otomatis untuk seluruh bab dan part yang belum memiliki suara"
+                  >
+                    {isBatchGenerating ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin text-amber-700" />
+                        <span>
+                          Part {batchProgress?.current || 1}/{batchProgress?.total || 1}...
+                        </span>
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-3.5 h-3.5 text-amber-600" />
+                        <span>⚡ Generate Semua Part Otomatis</span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {currentChapter?.audio_url ? (
+                  <button
+                    id="chapter-main-play-btn"
+                    onClick={onTogglePlay}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-full text-xs sm:text-sm font-semibold text-white bg-amber-600 hover:bg-amber-700 shadow-md transition-all transform hover:-translate-y-0.5"
+                  >
+                    {isPlaying ? (
+                      <>
+                        <Pause className="w-4 h-4 fill-current" />
+                        <span>Jeda Narasi Suara Bab Ini</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-4 h-4 fill-current" />
+                        <span>Putar Narasi Suara Bab Ini</span>
+                      </>
+                    )}
+                  </button>
+                ) : (
+                  <button
+                    id="chapter-generate-audio-btn"
+                    onClick={() => onGenerateAudioForChapter(currentChapter.id)}
+                    disabled={isGeneratingAudio || isBatchGenerating}
+                    className="inline-flex items-center gap-2 px-4 py-2 rounded-full text-xs font-semibold bg-neutral-200/80 hover:bg-neutral-300/80 text-neutral-800 disabled:opacity-50 transition-colors"
+                  >
+                    {isGeneratingAudio ? (
+                      <>
+                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                        <span>Sedang Membuat Audio Suara...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Volume2 className="w-3.5 h-3.5 text-amber-700" />
+                        <span>Buat Narasi Suara Part Ini</span>
+                      </>
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           </div>
 

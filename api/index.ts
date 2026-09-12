@@ -160,6 +160,72 @@ export function fallbackSegmentText(text: string, customTitle?: string) {
   };
 }
 
+// Helper to split text into natural narration chunks for TTS
+export function splitTextIntoTTSChunks(text: string, maxChunkLength = 850): string[] {
+  const clean = text.trim();
+  if (clean.length <= maxChunkLength) {
+    return [clean];
+  }
+
+  // Split by paragraphs first
+  const paragraphs = clean.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+  const chunks: string[] = [];
+  let current = '';
+
+  for (const para of paragraphs) {
+    if ((current + '\n\n' + para).trim().length <= maxChunkLength) {
+      current = (current ? current + '\n\n' : '') + para;
+      continue;
+    }
+
+    if (current.length > 0) {
+      chunks.push(current.trim());
+      current = '';
+    }
+
+    if (para.length <= maxChunkLength) {
+      current = para;
+      continue;
+    }
+
+    // Paragraph is longer than maxChunkLength, split by sentences
+    const sentenceRegex = /[^.!?\n]+(?:[.!?\n]+|$)/g;
+    const sentences = para.match(sentenceRegex) || [para];
+    for (const sentence of sentences) {
+      const sTrim = sentence.trim();
+      if (!sTrim) continue;
+
+      if ((current + ' ' + sTrim).trim().length <= maxChunkLength) {
+        current = (current ? current + ' ' : '') + sTrim;
+      } else {
+        if (current.length > 0) {
+          chunks.push(current.trim());
+          current = '';
+        }
+        if (sTrim.length <= maxChunkLength) {
+          current = sTrim;
+        } else {
+          // Hard break on space if sentence is unusually long
+          let rem = sTrim;
+          while (rem.length > maxChunkLength) {
+            let splitIdx = rem.lastIndexOf(' ', maxChunkLength);
+            if (splitIdx <= 0) splitIdx = maxChunkLength;
+            chunks.push(rem.slice(0, splitIdx).trim());
+            rem = rem.slice(splitIdx).trim();
+          }
+          current = rem;
+        }
+      }
+    }
+  }
+
+  if (current.trim().length > 0) {
+    chunks.push(current.trim());
+  }
+
+  return chunks;
+}
+
 // Router to handle endpoints both with and without '/api' prefix (for Vercel rewrites flexibility)
 const apiRouter = Router();
 
@@ -349,35 +415,47 @@ apiRouter.post('/tts', async (req: Request, res: Response) => {
       },
     });
 
-    // Send the narration text in ONE single call to conserve API quota
-    let narrationText = cleanText;
-    if (narrationText.length > 1200) {
-      const sentenceBoundary = narrationText.slice(0, 1200).match(/^(.*[.!?])\s/s);
-      narrationText = sentenceBoundary ? sentenceBoundary[1] : narrationText.slice(0, 1200);
-    }
+    // Split into natural narration chunks (up to 4 chunks = ~3400 characters, ~500-600 words)
+    const textChunks = splitTextIntoTTSChunks(cleanText, 850);
+    // Limit to max 4 chunks per HTTP request to avoid serverless timeout
+    const chunksToProcess = textChunks.slice(0, 4);
 
-    const narrationPrompt = `Bacakan naskah buku berikut dengan artikulasi jernih, tempo tenang, dan intonasi naratif yang alami dalam bahasa Indonesia:\n\n${narrationText}`;
+    const pcmBuffers: Buffer[] = [];
+    const silenceBuffer = Buffer.alloc(Math.floor(24000 * 2 * 0.25)); // 250ms silence between chunks
 
-    const ttsResponse = await ai.models.generateContent({
-      model: 'gemini-3.1-flash-tts-preview',
-      contents: [{ parts: [{ text: narrationPrompt }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: {
-          voiceConfig: {
-            prebuiltVoiceConfig: { voiceName: voice as any },
+    for (let cIdx = 0; cIdx < chunksToProcess.length; cIdx++) {
+      const chunk = chunksToProcess[cIdx];
+      const narrationPrompt = `Bacakan naskah buku berikut dengan artikulasi jernih, tempo tenang, dan intonasi naratif yang alami dalam bahasa Indonesia:\n\n${chunk}`;
+
+      const ttsResponse = await ai.models.generateContent({
+        model: 'gemini-3.1-flash-tts-preview',
+        contents: [{ parts: [{ text: narrationPrompt }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: voice as any },
+            },
           },
         },
-      },
-    });
+      });
 
-    const base64Audio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-    if (!base64Audio) {
+      const base64Audio = ttsResponse.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+      if (base64Audio) {
+        const rawPcm = Buffer.from(base64Audio, 'base64');
+        if (pcmBuffers.length > 0) {
+          pcmBuffers.push(silenceBuffer);
+        }
+        pcmBuffers.push(rawPcm);
+      }
+    }
+
+    if (pcmBuffers.length === 0) {
       throw new Error('Tidak ada data audio yang dihasilkan oleh model suara.');
     }
 
-    const rawPcm = Buffer.from(base64Audio, 'base64');
-    const wavBuffer = pcmToWavBuffer(rawPcm, 24000, 1, 16);
+    const combinedPcm = Buffer.concat(pcmBuffers);
+    const wavBuffer = pcmToWavBuffer(combinedPcm, 24000, 1, 16);
 
     const audioId = randomUUID();
     audioCache.set(audioId, {
@@ -390,7 +468,7 @@ apiRouter.post('/tts', async (req: Request, res: Response) => {
     const base64Wav = wavBuffer.toString('base64');
     const dataUrl = `data:audio/wav;base64,${base64Wav}`;
 
-    const durationSeconds = Math.round((rawPcm.length / (24000 * 2)) * 10) / 10;
+    const durationSeconds = Math.round((combinedPcm.length / (24000 * 2)) * 10) / 10;
 
     res.json({
       success: true,
@@ -400,6 +478,9 @@ apiRouter.post('/tts', async (req: Request, res: Response) => {
       duration_seconds: durationSeconds,
       engine: 'gemini',
       voice: voice,
+      chunks_count: chunksToProcess.length,
+      has_more_text: textChunks.length > 4,
+      total_words: cleanText.split(/\s+/).filter(Boolean).length,
     });
   } catch (err: any) {
     const isQuotaExhausted =

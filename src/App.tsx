@@ -8,7 +8,10 @@ import { ExportModal } from './components/ExportModal';
 import { AudioSettingsModal } from './components/AudioSettingsModal';
 import { SupabaseModal } from './components/SupabaseModal';
 import { ChapterData, EbookData, TTSConfig } from './types';
-import { splitChapterIntoParts } from './utils/chapterSplitter';
+import {
+  splitChapterIntoParts,
+  splitSingleChapterIntoAudioParts,
+} from './utils/chapterSplitter';
 import { browserSpeech } from './utils/browserTTS';
 import { isSupabaseConfigured } from './lib/supabase';
 
@@ -188,11 +191,16 @@ export default function App() {
     // Split locally into parts or single chapter
     setIsSegmenting(true);
     try {
+      let targetWords = 350;
+      if (splitMode === 'parts_short') targetWords = 250;
+      if (splitMode === 'parts_medium') targetWords = 450;
+      if (splitMode === 'parts_auto') targetWords = 350;
+
       const parts = splitChapterIntoParts(inputText, {
         chapterNumber,
         chapterTitle: chapterTitle.trim() || undefined,
         mode: splitMode,
-        targetWordsPerPart: 650,
+        targetWordsPerPart: targetWords,
       });
 
       const finalTitle =
@@ -238,6 +246,33 @@ export default function App() {
     } finally {
       setIsSegmenting(false);
     }
+  };
+
+  // Split an existing chapter into subparts (~350 words per part for audio)
+  const handleSplitCurrentChapterIntoParts = (chapterId: string) => {
+    const chapterIndex = ebook.bab.findIndex((b) => b.id === chapterId);
+    if (chapterIndex === -1) return;
+    const targetChapter = ebook.bab[chapterIndex];
+
+    const subparts = splitSingleChapterIntoAudioParts(targetChapter, 350);
+    if (subparts.length <= 1) {
+      alert('Bab ini sudah cukup ringkas dan tidak perlu dipecah lagi.');
+      return;
+    }
+
+    const updatedChapters = [
+      ...ebook.bab.slice(0, chapterIndex),
+      ...subparts,
+      ...ebook.bab.slice(chapterIndex + 1),
+    ].map((ch, idx) => ({ ...ch, nomor: idx + 1 }));
+
+    setEbook((prev) => ({
+      ...prev,
+      bab: updatedChapters,
+      total_kata: updatedChapters.reduce((acc, c) => acc + c.jumlah_kata, 0),
+    }));
+
+    setCurrentChapterIndex(chapterIndex);
   };
 
   // Triggered when user wants to add next chapter
@@ -543,6 +578,7 @@ export default function App() {
                 ttsConfig={ttsConfig}
                 onAddNewChapter={handleAddNewChapter}
                 onResetBook={handleResetAll}
+                onSplitChapterIntoParts={handleSplitCurrentChapterIntoParts}
               />
             )}
           </div>
@@ -568,6 +604,10 @@ export default function App() {
             onGenerateAudioForChapter={handleGenerateAudioForChapter}
             isGeneratingAudio={generatingChapterId === ebook.bab[currentChapterIndex]?.id}
             onAddNewChapter={handleAddNewChapter}
+            onSplitChapterIntoParts={handleSplitCurrentChapterIntoParts}
+            onGenerateAllAudio={handleGenerateAllAudio}
+            isBatchGenerating={isBatchGenerating}
+            batchProgress={batchProgress}
           />
         )}
       </div>

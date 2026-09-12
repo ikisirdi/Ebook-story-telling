@@ -1,0 +1,602 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Header } from './components/Header';
+import { TextInputView, SplitMode } from './components/TextInputView';
+import { ChapterManager } from './components/ChapterManager';
+import { EbookReaderView } from './components/EbookReaderView';
+import { JsonOutputModal } from './components/JsonOutputModal';
+import { ExportModal } from './components/ExportModal';
+import { AudioSettingsModal } from './components/AudioSettingsModal';
+import { SupabaseModal } from './components/SupabaseModal';
+import { ChapterData, EbookData, TTSConfig } from './types';
+import { splitChapterIntoParts } from './utils/chapterSplitter';
+import { browserSpeech } from './utils/browserTTS';
+import { isSupabaseConfigured } from './lib/supabase';
+
+export default function App() {
+  // Clean, empty slate (sistem polosan) for user's own stories
+  const [ebook, setEbook] = useState<EbookData>({
+    judul: '',
+    penulis: 'Penulis',
+    deskripsi: '',
+    bahasa: 'id-ID',
+    dibuat_pada: new Date().toISOString(),
+    total_kata: 0,
+    bab: [],
+  });
+
+  const [inputText, setInputText] = useState<string>('');
+  const [bookTitle, setBookTitle] = useState<string>('');
+  const [chapterNumber, setChapterNumber] = useState<number>(1);
+  const [chapterTitle, setChapterTitle] = useState<string>('');
+  const [splitMode, setSplitMode] = useState<SplitMode>('parts_auto');
+  const [activeTab, setActiveTab] = useState<'input' | 'reader'>('input');
+  const [currentChapterIndex, setCurrentChapterIndex] = useState<number>(0);
+
+  // Audio Playback State
+  const [isPlaying, setIsPlaying] = useState<boolean>(false);
+  const [activePlayingId, setActivePlayingId] = useState<string | null>(null);
+  const [currentTime, setCurrentTime] = useState<number>(0);
+  const [duration, setDuration] = useState<number>(0);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
+  const [ttsConfig, setTtsConfig] = useState<TTSConfig>({
+    voice: 'Kore',
+    speed: 1.0,
+    pitch: 1.0,
+    engine: 'gemini',
+  });
+
+  // Modals
+  const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
+  const [isJsonModalOpen, setIsJsonModalOpen] = useState<boolean>(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState<boolean>(false);
+  const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState<boolean>(false);
+
+  // Progress States
+  const [isSegmenting, setIsSegmenting] = useState<boolean>(false);
+  const [isBatchGenerating, setIsBatchGenerating] = useState<boolean>(false);
+  const [batchProgress, setBatchProgress] = useState<{ current: number; total: number }>({
+    current: 0,
+    total: 0,
+  });
+  const [generatingChapterId, setGeneratingChapterId] = useState<string | null>(null);
+
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Initialize hidden audio element
+  useEffect(() => {
+    const audio = new Audio();
+    audioRef.current = audio;
+
+    audio.ontimeupdate = () => {
+      setCurrentTime(audio.currentTime);
+      if (!isNaN(audio.duration)) {
+        setDuration(audio.duration);
+      }
+    };
+
+    audio.onloadedmetadata = () => {
+      if (!isNaN(audio.duration)) {
+        setDuration(audio.duration);
+      }
+    };
+
+    audio.onended = () => {
+      setIsPlaying(false);
+      setActivePlayingId(null);
+      // Auto play next chapter in reader mode
+      if (activeTab === 'reader' && currentChapterIndex < ebook.bab.length - 1) {
+        const nextIdx = currentChapterIndex + 1;
+        setCurrentChapterIndex(nextIdx);
+        setTimeout(() => {
+          const nextChapter = ebook.bab[nextIdx];
+          if (nextChapter?.audio_url) {
+            playAudioUrl(nextChapter.audio_url, nextChapter.id);
+          }
+        }, 600);
+      }
+    };
+
+    return () => {
+      audio.pause();
+      browserSpeech.stop();
+    };
+  }, [currentChapterIndex, activeTab, ebook.bab]);
+
+  // Sync playback speed
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.playbackRate = playbackSpeed;
+    }
+  }, [playbackSpeed]);
+
+  const wordCount = inputText.trim().split(/\s+/).filter(Boolean).length;
+
+  // Process a pasted chapter text into parts or segments
+  const handleProcessChapter = async (append: boolean = true) => {
+    if (!inputText.trim()) return;
+
+    if (splitMode === 'ai') {
+      setIsSegmenting(true);
+      try {
+        const response = await fetch('/api/segment', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: inputText,
+            titleHint: bookTitle.trim() || undefined,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error('Gagal memproses segmentasi AI.');
+        }
+
+        const data = await response.json();
+        const incomingChapters: ChapterData[] = (data.bab || []).map((ch: any, idx: number) => ({
+          id: `chap-${Date.now()}-${idx + 1}`,
+          nomor: ch.nomor || idx + 1,
+          judul_bab: ch.judul_bab || `Bab ${idx + 1}`,
+          ringkasan: ch.ringkasan || '',
+          teks: ch.teks || '',
+          jumlah_kata: ch.jumlah_kata || ch.teks?.split(/\s+/).filter(Boolean).length || 0,
+          audio_status: 'idle',
+        }));
+
+        const finalTitle = bookTitle.trim() || data.judul || 'Buku Narasi Elektronik';
+
+        if (append && ebook.bab.length > 0) {
+          const combined = [...ebook.bab, ...incomingChapters].map((ch, i) => ({
+            ...ch,
+            nomor: i + 1,
+          }));
+          const targetIndex = ebook.bab.length;
+          setEbook((prev) => ({
+            ...prev,
+            judul: prev.judul || finalTitle,
+            total_kata: combined.reduce((acc, c) => acc + c.jumlah_kata, 0),
+            bab: combined,
+          }));
+          setChapterNumber(combined.length + 1);
+          setCurrentChapterIndex(targetIndex);
+        } else {
+          const renumbered = incomingChapters.map((ch, i) => ({ ...ch, nomor: i + 1 }));
+          setEbook({
+            judul: finalTitle,
+            penulis: data.penulis || 'Penulis',
+            deskripsi: data.deskripsi || `Buku elektronik dengan ${renumbered.length} bab.`,
+            bahasa: 'id-ID',
+            dibuat_pada: new Date().toISOString(),
+            total_kata: renumbered.reduce((acc, c) => acc + c.jumlah_kata, 0),
+            bab: renumbered,
+          });
+          setChapterNumber(renumbered.length + 1);
+          setCurrentChapterIndex(0);
+        }
+
+        setInputText('');
+        setChapterTitle('');
+        setActiveTab('reader');
+      } catch (err: any) {
+        console.error(err);
+        alert(err.message || 'Terjadi kesalahan saat membagi bab.');
+      } finally {
+        setIsSegmenting(false);
+      }
+      return;
+    }
+
+    // Split locally into parts or single chapter
+    setIsSegmenting(true);
+    try {
+      const parts = splitChapterIntoParts(inputText, {
+        chapterNumber,
+        chapterTitle: chapterTitle.trim() || undefined,
+        mode: splitMode,
+        targetWordsPerPart: 650,
+      });
+
+      const finalTitle =
+        bookTitle.trim() ||
+        ebook.judul ||
+        (chapterTitle ? `Buku: ${chapterTitle}` : `Buku Narasi Elektronik`);
+
+      if (append && ebook.bab.length > 0) {
+        const combined = [...ebook.bab, ...parts].map((ch, i) => ({
+          ...ch,
+          nomor: i + 1,
+        }));
+        const targetIndex = ebook.bab.length;
+        setEbook((prev) => ({
+          ...prev,
+          judul: prev.judul || finalTitle,
+          total_kata: combined.reduce((acc, c) => acc + c.jumlah_kata, 0),
+          bab: combined,
+        }));
+        setChapterNumber(combined.length + 1);
+        setCurrentChapterIndex(targetIndex);
+      } else {
+        const renumbered = parts.map((ch, i) => ({ ...ch, nomor: i + 1 }));
+        setEbook({
+          judul: finalTitle,
+          penulis: 'Penulis',
+          deskripsi: `Buku elektronik dengan ${renumbered.length} bagian bab.`,
+          bahasa: 'id-ID',
+          dibuat_pada: new Date().toISOString(),
+          total_kata: renumbered.reduce((acc, c) => acc + c.jumlah_kata, 0),
+          bab: renumbered,
+        });
+        setChapterNumber(renumbered.length + 1);
+        setCurrentChapterIndex(0);
+      }
+
+      setInputText('');
+      setChapterTitle('');
+      setActiveTab('reader');
+    } catch (err: any) {
+      console.error(err);
+      alert('Gagal memproses bab: ' + (err.message || 'Format teks tidak valid.'));
+    } finally {
+      setIsSegmenting(false);
+    }
+  };
+
+  // Triggered when user wants to add next chapter
+  const handleAddNewChapter = () => {
+    setChapterNumber(ebook.bab.length + 1);
+    setChapterTitle('');
+    setActiveTab('input');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  // Reset all to blank/polosan state
+  const handleResetAll = () => {
+    if (audioRef.current) audioRef.current.pause();
+    browserSpeech.stop();
+    setIsPlaying(false);
+    setActivePlayingId(null);
+    setEbook({
+      judul: '',
+      penulis: 'Penulis',
+      deskripsi: '',
+      bahasa: 'id-ID',
+      dibuat_pada: new Date().toISOString(),
+      total_kata: 0,
+      bab: [],
+    });
+    setInputText('');
+    setBookTitle('');
+    setChapterNumber(1);
+    setChapterTitle('');
+    setSplitMode('parts_auto');
+    setCurrentChapterIndex(0);
+    setActiveTab('input');
+  };
+
+  // Generate audio for a single chapter
+  const handleGenerateAudioForChapter = async (chapterId: string): Promise<void> => {
+    const chapter = ebook.bab.find((b) => b.id === chapterId);
+    if (!chapter) return;
+
+    setGeneratingChapterId(chapterId);
+    setEbook((prev) => ({
+      ...prev,
+      bab: prev.bab.map((b) => (b.id === chapterId ? { ...b, audio_status: 'generating' } : b)),
+    }));
+
+    try {
+      if (ttsConfig.engine === 'browser') {
+        // Web Speech mode
+        setEbook((prev) => ({
+          ...prev,
+          bab: prev.bab.map((b) =>
+            b.id === chapterId
+              ? {
+                  ...b,
+                  audio_status: 'ready',
+                  audio_url: `speech:browser-id-ID`,
+                  durasi_detik: Math.round(b.jumlah_kata * 0.4),
+                }
+              : b
+          ),
+        }));
+      } else {
+        // Gemini TTS API
+        const response = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: chapter.teks,
+            voice: ttsConfig.voice,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok && (data.data_url || data.audio_url)) {
+          const finalAudioUrl = data.data_url || data.audio_url;
+          setEbook((prev) => ({
+            ...prev,
+            bab: prev.bab.map((b) =>
+              b.id === chapterId
+                ? {
+                    ...b,
+                    audio_status: 'ready',
+                    audio_url: finalAudioUrl,
+                    durasi_detik: data.duration_seconds || Math.round(b.jumlah_kata * 0.4),
+                    audio_error: undefined,
+                  }
+                : b
+            ),
+          }));
+        } else if (data.canUseBrowserTTS) {
+          // Graceful fallback to browser speech synthesis
+          setEbook((prev) => ({
+            ...prev,
+            bab: prev.bab.map((b) =>
+              b.id === chapterId
+                ? {
+                    ...b,
+                    audio_status: 'ready',
+                    audio_url: `speech:browser-id-ID`,
+                    durasi_detik: Math.round(b.jumlah_kata * 0.4),
+                    audio_error: undefined,
+                  }
+                : b
+            ),
+          }));
+        } else {
+          throw new Error(data.error || 'Gagal menghasilkan audio untuk bab ini.');
+        }
+      }
+    } catch (err: any) {
+      console.error(err);
+      setEbook((prev) => ({
+        ...prev,
+        bab: prev.bab.map((b) =>
+          b.id === chapterId
+            ? {
+                ...b,
+                audio_status: 'error',
+                audio_error: err.message || 'Gagal membuat audio.',
+              }
+            : b
+        ),
+      }));
+    } finally {
+      setGeneratingChapterId(null);
+    }
+  };
+
+  // Generate audio for all chapters sequentially
+  const handleGenerateAllAudio = async (): Promise<void> => {
+    const ungenerated = ebook.bab.filter((b) => !b.audio_url || b.audio_status !== 'ready');
+    if (ungenerated.length === 0) return;
+
+    setIsBatchGenerating(true);
+    setBatchProgress({ current: 0, total: ungenerated.length });
+
+    for (let i = 0; i < ungenerated.length; i++) {
+      setBatchProgress({ current: i + 1, total: ungenerated.length });
+      await handleGenerateAudioForChapter(ungenerated[i].id);
+      // Small pause between chapters to avoid rate spikes
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
+    setIsBatchGenerating(false);
+  };
+
+  // Play / Pause logic
+  const playAudioUrl = (url: string, chapterId: string) => {
+    if (!audioRef.current) return;
+
+    browserSpeech.stop();
+
+    if (url.startsWith('speech:')) {
+      // Browser Speech
+      const chapter = ebook.bab.find((b) => b.id === chapterId);
+      if (chapter) {
+        setIsPlaying(true);
+        setActivePlayingId(chapterId);
+        browserSpeech.speak(chapter.teks, {
+          rate: playbackSpeed,
+          onEnd: () => {
+            setIsPlaying(false);
+            setActivePlayingId(null);
+          },
+          onError: () => {
+            setIsPlaying(false);
+            setActivePlayingId(null);
+          },
+        });
+      }
+      return;
+    }
+
+    audioRef.current.src = url;
+    audioRef.current.playbackRate = playbackSpeed;
+    audioRef.current
+      .play()
+      .then(() => {
+        setIsPlaying(true);
+        setActivePlayingId(chapterId);
+      })
+      .catch((err) => {
+        console.error('Audio play error:', err);
+        setIsPlaying(false);
+      });
+  };
+
+  const handleTogglePlayCurrent = () => {
+    const currentChapter = ebook.bab[currentChapterIndex];
+    if (!currentChapter) return;
+
+    if (isPlaying) {
+      if (audioRef.current && !audioRef.current.paused) {
+        audioRef.current.pause();
+      }
+      browserSpeech.stop();
+      setIsPlaying(false);
+      setActivePlayingId(null);
+    } else {
+      if (currentChapter.audio_url) {
+        playAudioUrl(currentChapter.audio_url, currentChapter.id);
+      } else {
+        // Fallback: Speak via browser speech
+        setIsPlaying(true);
+        setActivePlayingId(currentChapter.id);
+        browserSpeech.speak(currentChapter.teks, {
+          rate: playbackSpeed,
+          onEnd: () => {
+            setIsPlaying(false);
+            setActivePlayingId(null);
+          },
+          onError: () => {
+            setIsPlaying(false);
+            setActivePlayingId(null);
+          },
+        });
+      }
+    }
+  };
+
+  const handleTogglePlayPreview = (chapter: ChapterData) => {
+    if (isPlaying && activePlayingId === chapter.id) {
+      if (audioRef.current) audioRef.current.pause();
+      browserSpeech.stop();
+      setIsPlaying(false);
+      setActivePlayingId(null);
+    } else {
+      const idx = ebook.bab.findIndex((b) => b.id === chapter.id);
+      if (idx !== -1) setCurrentChapterIndex(idx);
+      if (chapter.audio_url) {
+        playAudioUrl(chapter.audio_url, chapter.id);
+      }
+    }
+  };
+
+  const handleSeek = (seconds: number) => {
+    if (audioRef.current && !isNaN(seconds)) {
+      audioRef.current.currentTime = seconds;
+      setCurrentTime(seconds);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-neutral-50 text-neutral-900 flex flex-col antialiased">
+      {/* Top Header Navbar */}
+      <Header
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        hasChapters={ebook.bab.length > 0}
+        totalChapters={ebook.bab.length}
+        totalWords={ebook.total_kata}
+        onOpenExport={() => setIsExportModalOpen(true)}
+        onOpenJson={() => setIsJsonModalOpen(true)}
+        onOpenSettings={() => setIsSettingsModalOpen(true)}
+        onOpenSupabase={() => setIsSupabaseModalOpen(true)}
+        isSupabaseConnected={isSupabaseConfigured()}
+        isProcessing={isSegmenting || isBatchGenerating}
+      />
+
+      {/* Main View Area */}
+      <div className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+        {activeTab === 'input' ? (
+          <div className="space-y-8">
+            <TextInputView
+              inputText={inputText}
+              setInputText={setInputText}
+              bookTitle={bookTitle}
+              setBookTitle={setBookTitle}
+              chapterNumber={chapterNumber}
+              setChapterNumber={setChapterNumber}
+              chapterTitle={chapterTitle}
+              setChapterTitle={setChapterTitle}
+              splitMode={splitMode}
+              setSplitMode={setSplitMode}
+              onProcessChapter={handleProcessChapter}
+              isProcessing={isSegmenting}
+              wordCount={wordCount}
+              hasExistingChapters={ebook.bab.length > 0}
+              existingChaptersCount={ebook.bab.length}
+              onResetAll={handleResetAll}
+            />
+
+            {ebook.bab.length > 0 && (
+              <ChapterManager
+                ebook={ebook}
+                setEbook={setEbook}
+                onGenerateAudioForChapter={handleGenerateAudioForChapter}
+                onGenerateAllAudio={handleGenerateAllAudio}
+                isBatchGenerating={isBatchGenerating}
+                batchProgress={batchProgress}
+                onOpenReaderAtChapter={(idx) => {
+                  setCurrentChapterIndex(idx);
+                  setActiveTab('reader');
+                }}
+                activePlayingId={activePlayingId}
+                onTogglePlayPreview={handleTogglePlayPreview}
+                ttsConfig={ttsConfig}
+                onAddNewChapter={handleAddNewChapter}
+                onResetBook={handleResetAll}
+              />
+            )}
+          </div>
+        ) : (
+          <EbookReaderView
+            ebook={ebook}
+            currentChapterIndex={currentChapterIndex}
+            setCurrentChapterIndex={(idx) => {
+              setCurrentChapterIndex(idx);
+              // Stop previous audio
+              if (audioRef.current) audioRef.current.pause();
+              browserSpeech.stop();
+              setIsPlaying(false);
+              setActivePlayingId(null);
+            }}
+            isPlaying={isPlaying}
+            onTogglePlay={handleTogglePlayCurrent}
+            currentTime={currentTime}
+            duration={duration}
+            onSeek={handleSeek}
+            playbackSpeed={playbackSpeed}
+            setPlaybackSpeed={setPlaybackSpeed}
+            onGenerateAudioForChapter={handleGenerateAudioForChapter}
+            isGeneratingAudio={generatingChapterId === ebook.bab[currentChapterIndex]?.id}
+            onAddNewChapter={handleAddNewChapter}
+          />
+        )}
+      </div>
+
+      {/* Modals */}
+      <JsonOutputModal
+        isOpen={isJsonModalOpen}
+        onClose={() => setIsJsonModalOpen(false)}
+        ebook={ebook}
+      />
+
+      <ExportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        ebook={ebook}
+      />
+
+      <AudioSettingsModal
+        isOpen={isSettingsModalOpen}
+        onClose={() => setIsSettingsModalOpen(false)}
+        ttsConfig={ttsConfig}
+        setTtsConfig={setTtsConfig}
+      />
+
+      <SupabaseModal
+        isOpen={isSupabaseModalOpen}
+        onClose={() => setIsSupabaseModalOpen(false)}
+        ebook={ebook}
+        onLoadEbook={(loaded) => {
+          setEbook(loaded);
+          setCurrentChapterIndex(0);
+          setActiveTab('reader');
+        }}
+      />
+    </div>
+  );
+}

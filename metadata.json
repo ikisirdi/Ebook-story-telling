@@ -1,0 +1,6 @@
+{
+  "name": "Generator E-Book & Audiobook Bahasa Indonesia",
+  "description": "Sistem AI untuk mengubah teks panjang hingga 15.000 kata menjadi buku elektronik terstruktur dengan narasi audio alami bahasa Indonesia, ekspor HTML/EPUB, dan data JSON.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

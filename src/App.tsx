@@ -13,7 +13,12 @@ import {
   splitSingleChapterIntoAudioParts,
 } from './utils/chapterSplitter';
 import { browserSpeech } from './utils/browserTTS';
-import { isSupabaseConfigured } from './lib/supabase';
+import { isSupabaseConfigured, syncSupabaseConfigFromServer } from './lib/supabase';
+import {
+  fetchBooksList,
+  loadEbookWithChapters,
+  SupabaseBookSummary,
+} from './services/supabaseService';
 
 export default function App() {
   // Clean, empty slate (sistem polosan) for user's own stories
@@ -47,6 +52,11 @@ export default function App() {
     pitch: 1.0,
     engine: 'gemini',
   });
+
+  // Supabase Saved Books State for direct in-navigation reading
+  const [savedBooks, setSavedBooks] = useState<SupabaseBookSummary[]>([]);
+  const [isLoadingBooks, setIsLoadingBooks] = useState<boolean>(false);
+  const [isSupabaseReady, setIsSupabaseReady] = useState<boolean>(isSupabaseConfigured());
 
   // Modals
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
@@ -111,6 +121,69 @@ export default function App() {
       audioRef.current.playbackRate = playbackSpeed;
     }
   }, [playbackSpeed]);
+
+  // Fetch and deduplicate books from Supabase
+  const refreshSavedBooks = async () => {
+    if (!isSupabaseConfigured()) {
+      setIsSupabaseReady(false);
+      return;
+    }
+    setIsSupabaseReady(true);
+    setIsLoadingBooks(true);
+    try {
+      // fetchBooksList automatically deduplicates same titles to 1 latest book
+      const list = await fetchBooksList(true);
+      setSavedBooks(list);
+    } catch (err) {
+      console.error('Failed to fetch books in App:', err);
+    } finally {
+      setIsLoadingBooks(false);
+    }
+  };
+
+  // Sync Supabase config from server across devices on mount
+  useEffect(() => {
+    syncSupabaseConfigFromServer().then((hasConfig) => {
+      if (hasConfig || isSupabaseConfigured()) {
+        setIsSupabaseReady(true);
+        refreshSavedBooks();
+      }
+    });
+
+    const handleCredUpdate = () => {
+      setIsSupabaseReady(isSupabaseConfigured());
+      refreshSavedBooks();
+    };
+
+    window.addEventListener('supabase_credentials_updated', handleCredUpdate);
+    window.addEventListener('supabase_config_synced', handleCredUpdate);
+    return () => {
+      window.removeEventListener('supabase_credentials_updated', handleCredUpdate);
+      window.removeEventListener('supabase_config_synced', handleCredUpdate);
+    };
+  }, []);
+
+  // Direct load a book from navigation without opening Supabase modal
+  const handleDirectSelectBook = async (bookId: string) => {
+    try {
+      setIsLoadingBooks(true);
+      const loaded = await loadEbookWithChapters(bookId);
+      if (loaded) {
+        if (audioRef.current) audioRef.current.pause();
+        browserSpeech.stop();
+        setIsPlaying(false);
+        setActivePlayingId(null);
+        setEbook(loaded);
+        setCurrentChapterIndex(0);
+        setActiveTab('reader');
+      }
+    } catch (err: any) {
+      console.error('Failed to load book directly:', err);
+      alert('Gagal memuat buku: ' + (err.message || 'Kesalahan koneksi database'));
+    } finally {
+      setIsLoadingBooks(false);
+    }
+  };
 
   const wordCount = inputText.trim().split(/\s+/).filter(Boolean).length;
 
@@ -608,6 +681,12 @@ export default function App() {
             onGenerateAllAudio={handleGenerateAllAudio}
             isBatchGenerating={isBatchGenerating}
             batchProgress={batchProgress}
+            savedBooks={savedBooks}
+            isLoadingBooks={isLoadingBooks}
+            onSelectBook={handleDirectSelectBook}
+            onRefreshBooks={refreshSavedBooks}
+            onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
+            isSupabaseConnected={isSupabaseReady}
           />
         )}
       </div>
@@ -634,12 +713,16 @@ export default function App() {
 
       <SupabaseModal
         isOpen={isSupabaseModalOpen}
-        onClose={() => setIsSupabaseModalOpen(false)}
+        onClose={() => {
+          setIsSupabaseModalOpen(false);
+          refreshSavedBooks();
+        }}
         ebook={ebook}
         onLoadEbook={(loaded) => {
           setEbook(loaded);
           setCurrentChapterIndex(0);
           setActiveTab('reader');
+          refreshSavedBooks();
         }}
       />
     </div>

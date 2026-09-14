@@ -74,15 +74,12 @@ export const Header: React.FC<HeaderProps> = ({
           <button
             id="tab-reader-btn"
             onClick={() => setActiveTab('reader')}
-            disabled={!hasChapters}
             className={`flex items-center gap-2 px-3 sm:px-4 py-1.5 text-xs sm:text-sm font-medium rounded-md transition-all ${
               activeTab === 'reader'
                 ? 'bg-white text-neutral-900 shadow-xs'
-                : hasChapters
-                ? 'text-neutral-600 hover:text-neutral-900'
-                : 'text-neutral-300 cursor-not-allowed'
+                : 'text-neutral-600 hover:text-neutral-900'
             }`}
-            title={!hasChapters ? 'Bagi teks menjadi bab terlebih dahulu' : 'Buka E-Reader'}
+            title="Buka E-Reader & Perpustakaan Buku"
           >
             <BookOpen className="w-4 h-4" />
             <span>Baca E-Book</span>

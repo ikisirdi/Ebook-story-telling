@@ -108,6 +108,7 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
   const [supabaseKey, setSupabaseKey] = useState<string>('');
   const [isCopied, setIsCopied] = useState<boolean>(false);
   const [savedBooks, setSavedBooks] = useState<SupabaseBookSummary[]>([]);
+  const [showAllVersions, setShowAllVersions] = useState<boolean>(false);
   const [isLoadingBooks, setIsLoadingBooks] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
@@ -118,16 +119,17 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
       setSupabaseUrl(creds.url);
       setSupabaseKey(creds.key);
       if (isSupabaseConfigured()) {
-        loadBooks();
+        loadBooks(showAllVersions);
       }
     }
   }, [isOpen]);
 
-  const loadBooks = async () => {
+  const loadBooks = async (all = showAllVersions) => {
     setIsLoadingBooks(true);
     setStatusMessage(null);
     try {
-      const books = await fetchBooksList();
+      // deduplicate if all is false
+      const books = await fetchBooksList(!all);
       setSavedBooks(books);
     } catch (err: any) {
       console.error(err);
@@ -504,18 +506,40 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
 
               {/* Saved Books Listing */}
               <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-600">
-                    Daftar Buku Tersimpan di Supabase ({savedBooks.length})
-                  </h4>
-                  <button
-                    onClick={loadBooks}
-                    disabled={isLoadingBooks || !isSupabaseConfigured()}
-                    className="text-xs text-neutral-500 hover:text-neutral-900 inline-flex items-center gap-1"
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isLoadingBooks ? 'animate-spin' : ''}`} />
-                    <span>Muat Ulang</span>
-                  </button>
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <div>
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-neutral-600">
+                      {showAllVersions
+                        ? `Semua Baris di Database (${savedBooks.length})`
+                        : `Daftar Judul Buku Tersimpan (${savedBooks.length})`}
+                    </h4>
+                    <p className="text-[11px] text-neutral-400">
+                      {showAllVersions
+                        ? 'Menampilkan seluruh baris riwayat data di tabel books secara terperinci'
+                        : 'Hanya menampilkan 1 versi terbaru untuk setiap judul buku yang sama'}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const next = !showAllVersions;
+                        setShowAllVersions(next);
+                        loadBooks(next);
+                      }}
+                      className="text-xs px-2.5 py-1 rounded-lg border border-neutral-200 hover:bg-neutral-50 text-neutral-600 font-medium transition-colors cursor-pointer"
+                    >
+                      {showAllVersions ? 'Gabungkan Judul Sama' : 'Lihat Semua Baris'}
+                    </button>
+                    <button
+                      onClick={() => loadBooks(showAllVersions)}
+                      disabled={isLoadingBooks || !isSupabaseConfigured()}
+                      className="text-xs text-neutral-500 hover:text-neutral-900 inline-flex items-center gap-1 cursor-pointer"
+                    >
+                      <RefreshCw className={`w-3.5 h-3.5 ${isLoadingBooks ? 'animate-spin' : ''}`} />
+                      <span>Muat Ulang</span>
+                    </button>
+                  </div>
                 </div>
 
                 {!isSupabaseConfigured() ? (
@@ -534,24 +558,36 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
                         className="p-3.5 bg-white border border-neutral-200 rounded-xl flex items-center justify-between gap-3 shadow-2xs hover:border-neutral-300 transition-colors"
                       >
                         <div className="min-w-0">
-                          <h5 className="text-xs sm:text-sm font-bold text-neutral-900 truncate">
-                            {b.title}
-                          </h5>
+                          <div className="flex items-center gap-2">
+                            <h5 className="text-xs sm:text-sm font-bold text-neutral-900 truncate">
+                              {b.title}
+                            </h5>
+                            {!showAllVersions && b.duplicate_count && b.duplicate_count > 1 && (
+                              <span className="text-[10px] bg-neutral-100 text-neutral-600 px-1.5 py-0.5 rounded font-medium shrink-0">
+                                Versi Terbaru
+                              </span>
+                            )}
+                            {showAllVersions && (
+                              <span className="text-[10px] font-mono bg-neutral-100 text-neutral-500 px-1.5 py-0.2 rounded shrink-0 truncate max-w-[120px]">
+                                ID: {b.id.slice(0, 8)}...
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[11px] text-neutral-500 mt-0.5">
-                            {b.author} • {b.total_words} kata • Tersimpan {new Date(b.created_at).toLocaleDateString('id-ID')}
+                            {b.author} • {b.total_words} kata • Tersimpan {new Date(b.updated_at || b.created_at).toLocaleString('id-ID')}
                           </p>
                         </div>
                         <div className="flex items-center gap-2 shrink-0">
                           <button
                             onClick={() => handleSelectBook(b.id)}
-                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-neutral-100 hover:bg-neutral-200 text-neutral-800 transition-colors"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-neutral-100 hover:bg-neutral-200 text-neutral-800 transition-colors cursor-pointer"
                           >
                             <FolderOpen className="w-3.5 h-3.5" />
                             <span>Buka Buku</span>
                           </button>
                           <button
                             onClick={() => handleDeleteBook(b.id, b.title)}
-                            className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                            className="p-1.5 text-neutral-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
                             title="Hapus Buku"
                           >
                             <Trash2 className="w-4 h-4" />

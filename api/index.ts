@@ -2,6 +2,8 @@ import express, { Request, Response, Router } from 'express';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Modality, Type } from '@google/genai';
 import { randomUUID } from 'crypto';
+import fs from 'fs';
+import path from 'path';
 
 dotenv.config();
 
@@ -226,8 +228,117 @@ export function splitTextIntoTTSChunks(text: string, maxChunkLength = 850): stri
   return chunks;
 }
 
+// Persistent Supabase configuration storage on server (ensures all devices share credentials)
+const SUPABASE_CONFIG_FILE = path.join(process.cwd(), '.supabase-config.json');
+const SUPABASE_TMP_CONFIG_FILE = '/tmp/.supabase-config.json';
+let inMemorySupabaseConfig: { url: string; key: string } | null = null;
+
+function getStoredSupabaseConfig(): { url: string; key: string } {
+  // 1. Environment variables have priority
+  const envUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+  const envKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+  if (envUrl && envKey) {
+    return { url: envUrl.trim(), key: envKey.trim() };
+  }
+
+  // 2. In-memory cache
+  if (inMemorySupabaseConfig && inMemorySupabaseConfig.url && inMemorySupabaseConfig.key) {
+    return inMemorySupabaseConfig;
+  }
+
+  // 3. Read from persistent file if available
+  const candidateFiles = [SUPABASE_CONFIG_FILE, SUPABASE_TMP_CONFIG_FILE];
+  for (const file of candidateFiles) {
+    try {
+      if (fs.existsSync(file)) {
+        const raw = fs.readFileSync(file, 'utf-8');
+        const data = JSON.parse(raw);
+        if (data && data.url && data.key) {
+          inMemorySupabaseConfig = { url: String(data.url).trim(), key: String(data.key).trim() };
+          return inMemorySupabaseConfig;
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return { url: '', key: '' };
+}
+
+function saveStoredSupabaseConfig(url: string, key: string): boolean {
+  inMemorySupabaseConfig = { url: url.trim(), key: key.trim() };
+  const payload = JSON.stringify({ url: url.trim(), key: key.trim(), savedAt: new Date().toISOString() }, null, 2);
+  let saved = false;
+
+  try {
+    fs.writeFileSync(SUPABASE_CONFIG_FILE, payload, 'utf-8');
+    saved = true;
+  } catch {
+    // ignore if process.cwd() is read-only
+  }
+
+  try {
+    fs.writeFileSync(SUPABASE_TMP_CONFIG_FILE, payload, 'utf-8');
+    saved = true;
+  } catch {
+    // ignore
+  }
+
+  return saved;
+}
+
+function clearStoredSupabaseConfig(): void {
+  inMemorySupabaseConfig = null;
+  try {
+    if (fs.existsSync(SUPABASE_CONFIG_FILE)) fs.unlinkSync(SUPABASE_CONFIG_FILE);
+  } catch {}
+  try {
+    if (fs.existsSync(SUPABASE_TMP_CONFIG_FILE)) fs.unlinkSync(SUPABASE_TMP_CONFIG_FILE);
+  } catch {}
+}
+
 // Router to handle endpoints both with and without '/api' prefix (for Vercel rewrites flexibility)
 const apiRouter = Router();
+
+// Supabase configuration sync endpoint
+apiRouter.get('/supabase-config', (_req: Request, res: Response) => {
+  const config = getStoredSupabaseConfig();
+  res.json({
+    configured: Boolean(config.url && config.key),
+    url: config.url,
+    key: config.key,
+  });
+});
+
+apiRouter.post('/supabase-config', (req: Request, res: Response) => {
+  try {
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {}
+    }
+    const { url, key, reset } = body || {};
+
+    if (reset) {
+      clearStoredSupabaseConfig();
+      return res.json({ success: true, message: 'Kredensial Supabase berhasil dibersihkan.' });
+    }
+
+    if (!url || !key) {
+      return res.status(400).json({ error: 'URL dan Anon Key diperlukan.' });
+    }
+
+    saveStoredSupabaseConfig(url, key);
+    return res.json({
+      success: true,
+      message: 'Kredensial Supabase berhasil disimpan secara permanen di server untuk semua perangkat.',
+    });
+  } catch (err: any) {
+    return res.status(500).json({ error: err.message || 'Gagal menyimpan konfigurasi Supabase.' });
+  }
+});
 
 // Health check API
 apiRouter.get('/health', (_req: Request, res: Response) => {

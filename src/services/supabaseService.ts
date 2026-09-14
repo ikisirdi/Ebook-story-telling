@@ -9,11 +9,65 @@ export interface SupabaseBookSummary {
   total_words: number;
   created_at: string;
   updated_at: string;
+  duplicate_count?: number;
 }
 
 /**
- * Save or update an entire E-Book and its chapters to Supabase
+ * Deduplicate books by title, keeping the latest updated version
  */
+export function deduplicateBooksByTitle(books: SupabaseBookSummary[]): SupabaseBookSummary[] {
+  const map = new Map<string, SupabaseBookSummary>();
+
+  for (const book of books) {
+    const normTitle = (book.title || 'Buku Narasi Elektronik').trim().toLowerCase();
+    const existing = map.get(normTitle);
+
+    if (!existing) {
+      map.set(normTitle, { ...book, duplicate_count: 1 });
+    } else {
+      existing.duplicate_count = (existing.duplicate_count || 1) + 1;
+      // Keep newer one if current book has newer timestamp
+      const existingTime = new Date(existing.updated_at || existing.created_at || 0).getTime();
+      const currentTime = new Date(book.updated_at || book.created_at || 0).getTime();
+      if (currentTime > existingTime) {
+        map.set(normTitle, { ...book, duplicate_count: existing.duplicate_count });
+      }
+    }
+  }
+
+  return Array.from(map.values());
+}
+
+/**
+ * Fetch list of saved books from Supabase with automatic deduplication
+ */
+export async function fetchBooksList(deduplicate = true): Promise<SupabaseBookSummary[]> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return [];
+
+  const { data, error } = await supabase
+    .from('books')
+    .select('id, title, author, description, total_words, created_at, updated_at')
+    .order('updated_at', { ascending: false });
+
+  if (error) {
+    console.error('Error fetching books from Supabase:', error);
+    throw error;
+  }
+
+  const rawList = (data || []) as SupabaseBookSummary[];
+  if (deduplicate) {
+    return deduplicateBooksByTitle(rawList);
+  }
+  return rawList;
+}
+
+/**
+ * Fetch only unique books by title (convenience wrapper)
+ */
+export async function fetchUniqueBooksList(): Promise<SupabaseBookSummary[]> {
+  return fetchBooksList(true);
+}
 export async function saveEbookToSupabase(
   ebook: EbookData,
   existingBookId?: string
@@ -101,26 +155,6 @@ export async function saveEbookToSupabase(
       error: err.message || 'Gagal menyimpan buku ke database Supabase.',
     };
   }
-}
-
-/**
- * Fetch list of all saved books from Supabase
- */
-export async function fetchBooksList(): Promise<SupabaseBookSummary[]> {
-  const supabase = getSupabaseClient();
-  if (!supabase) return [];
-
-  const { data, error } = await supabase
-    .from('books')
-    .select('id, title, author, description, total_words, created_at, updated_at')
-    .order('updated_at', { ascending: false });
-
-  if (error) {
-    console.error('Error fetching books from Supabase:', error);
-    throw error;
-  }
-
-  return (data || []) as SupabaseBookSummary[];
 }
 
 /**

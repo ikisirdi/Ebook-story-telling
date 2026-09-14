@@ -1,5 +1,5 @@
 import React from 'react';
-import { BookOpen, FileText, Download, Code, Sparkles, Volume2, Settings2, Database } from 'lucide-react';
+import { BookOpen, FileText, Download, Code, Sparkles, Settings2, Database, Save, RefreshCw, CheckCircle2 } from 'lucide-react';
 
 interface HeaderProps {
   activeTab: 'input' | 'reader';
@@ -13,6 +13,9 @@ interface HeaderProps {
   onOpenSupabase: () => void;
   isSupabaseConnected?: boolean;
   isProcessing: boolean;
+  isSavingToDb?: boolean;
+  dbSaveSuccess?: boolean | null;
+  onSaveToDatabase?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -27,6 +30,9 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSupabase,
   isSupabaseConnected = false,
   isProcessing,
+  isSavingToDb = false,
+  dbSaveSuccess = null,
+  onSaveToDatabase,
 }) => {
   return (
     <header className="sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-neutral-200/80 shadow-xs">
@@ -124,6 +130,38 @@ export const Header: React.FC<HeaderProps> = ({
             <Code className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Format JSON</span>
           </button>
+
+          {/* Supabase Save Status / Button */}
+          {isSupabaseConnected && hasChapters && onSaveToDatabase && (
+            <button
+              id="header-save-db-btn"
+              onClick={onSaveToDatabase}
+              disabled={isSavingToDb}
+              className={`inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-semibold rounded-lg border transition-all cursor-pointer ${
+                dbSaveSuccess
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                  : 'bg-white hover:bg-neutral-50 text-neutral-700 border-neutral-200 shadow-xs'
+              }`}
+              title="Simpan buku dan seluruh bab ke Supabase"
+            >
+              {isSavingToDb ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                  <span className="hidden md:inline text-amber-700">Menyimpan...</span>
+                </>
+              ) : dbSaveSuccess ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="hidden md:inline text-emerald-700">Tersimpan ke DB</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="hidden md:inline">Simpan ke DB</span>
+                </>
+              )}
+            </button>
+          )}
 
           <button
             id="open-export-btn"

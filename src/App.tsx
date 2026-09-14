@@ -14,9 +14,11 @@ import {
 } from './utils/chapterSplitter';
 import { browserSpeech } from './utils/browserTTS';
 import { isSupabaseConfigured, syncSupabaseConfigFromServer } from './lib/supabase';
+import { CheckCircle2 } from 'lucide-react';
 import {
   fetchBooksList,
   loadEbookWithChapters,
+  saveEbookToSupabase,
   SupabaseBookSummary,
 } from './services/supabaseService';
 
@@ -57,6 +59,9 @@ export default function App() {
   const [savedBooks, setSavedBooks] = useState<SupabaseBookSummary[]>([]);
   const [isLoadingBooks, setIsLoadingBooks] = useState<boolean>(false);
   const [isSupabaseReady, setIsSupabaseReady] = useState<boolean>(isSupabaseConfigured());
+  const [isSavingToDb, setIsSavingToDb] = useState<boolean>(false);
+  const [dbSaveSuccess, setDbSaveSuccess] = useState<boolean | null>(null);
+  const [saveToast, setSaveToast] = useState<string | null>(null);
 
   // Modals
   const [isExportModalOpen, setIsExportModalOpen] = useState<boolean>(false);
@@ -163,6 +168,38 @@ export default function App() {
     };
   }, []);
 
+  // Persist current ebook state to Supabase Cloud Database
+  const persistEbookToSupabase = async (targetEbook: EbookData): Promise<string | null> => {
+    if (!isSupabaseConfigured() || !targetEbook.bab || targetEbook.bab.length === 0) {
+      return null;
+    }
+    setIsSavingToDb(true);
+    try {
+      const res = await saveEbookToSupabase(targetEbook, targetEbook.id);
+      if (res.success && res.bookId) {
+        targetEbook.id = res.bookId;
+        setEbook((prev) => ({ ...prev, id: res.bookId }));
+        setDbSaveSuccess(true);
+        setSaveToast(`✓ Buku "${targetEbook.judul || 'Tanpa Judul'}" (${targetEbook.bab.length} bab) tersimpan di Supabase!`);
+        refreshSavedBooks();
+        setTimeout(() => setDbSaveSuccess(null), 4000);
+        setTimeout(() => setSaveToast(null), 4000);
+        return res.bookId;
+      } else {
+        console.warn('Auto-save to Supabase failed:', res.error);
+        setDbSaveSuccess(false);
+        setTimeout(() => setDbSaveSuccess(null), 4000);
+      }
+    } catch (err) {
+      console.error('Auto-save error:', err);
+      setDbSaveSuccess(false);
+      setTimeout(() => setDbSaveSuccess(null), 4000);
+    } finally {
+      setIsSavingToDb(false);
+    }
+    return null;
+  };
+
   // Direct load a book from navigation without opening Supabase modal
   const handleDirectSelectBook = async (bookId: string) => {
     try {
@@ -174,6 +211,8 @@ export default function App() {
         setIsPlaying(false);
         setActivePlayingId(null);
         setEbook(loaded);
+        setBookTitle(loaded.judul);
+        setChapterNumber(loaded.bab.length + 1);
         setCurrentChapterIndex(0);
         setActiveTab('reader');
       }
@@ -218,7 +257,8 @@ export default function App() {
           audio_status: 'idle',
         }));
 
-        const finalTitle = bookTitle.trim() || data.judul || 'Buku Narasi Elektronik';
+        const finalTitle = bookTitle.trim() || data.judul || ebook.judul || 'Buku Narasi Elektronik';
+        let updatedEbook: EbookData;
 
         if (append && ebook.bab.length > 0) {
           const combined = [...ebook.bab, ...incomingChapters].map((ch, i) => ({
@@ -226,17 +266,18 @@ export default function App() {
             nomor: i + 1,
           }));
           const targetIndex = ebook.bab.length;
-          setEbook((prev) => ({
-            ...prev,
-            judul: prev.judul || finalTitle,
+          updatedEbook = {
+            ...ebook,
+            judul: bookTitle.trim() || ebook.judul || finalTitle,
             total_kata: combined.reduce((acc, c) => acc + c.jumlah_kata, 0),
             bab: combined,
-          }));
+          };
+          setEbook(updatedEbook);
           setChapterNumber(combined.length + 1);
           setCurrentChapterIndex(targetIndex);
         } else {
           const renumbered = incomingChapters.map((ch, i) => ({ ...ch, nomor: i + 1 }));
-          setEbook({
+          updatedEbook = {
             judul: finalTitle,
             penulis: data.penulis || 'Penulis',
             deskripsi: data.deskripsi || `Buku elektronik dengan ${renumbered.length} bab.`,
@@ -244,7 +285,8 @@ export default function App() {
             dibuat_pada: new Date().toISOString(),
             total_kata: renumbered.reduce((acc, c) => acc + c.jumlah_kata, 0),
             bab: renumbered,
-          });
+          };
+          setEbook(updatedEbook);
           setChapterNumber(renumbered.length + 1);
           setCurrentChapterIndex(0);
         }
@@ -252,6 +294,11 @@ export default function App() {
         setInputText('');
         setChapterTitle('');
         setActiveTab('reader');
+
+        // Otomatis simpan ke Supabase jika database siap
+        if (isSupabaseConfigured()) {
+          await persistEbookToSupabase(updatedEbook);
+        }
       } catch (err: any) {
         console.error(err);
         alert(err.message || 'Terjadi kesalahan saat membagi bab.');
@@ -281,23 +328,26 @@ export default function App() {
         ebook.judul ||
         (chapterTitle ? `Buku: ${chapterTitle}` : `Buku Narasi Elektronik`);
 
+      let updatedEbook: EbookData;
+
       if (append && ebook.bab.length > 0) {
         const combined = [...ebook.bab, ...parts].map((ch, i) => ({
           ...ch,
           nomor: i + 1,
         }));
         const targetIndex = ebook.bab.length;
-        setEbook((prev) => ({
-          ...prev,
-          judul: prev.judul || finalTitle,
+        updatedEbook = {
+          ...ebook,
+          judul: bookTitle.trim() || ebook.judul || finalTitle,
           total_kata: combined.reduce((acc, c) => acc + c.jumlah_kata, 0),
           bab: combined,
-        }));
+        };
+        setEbook(updatedEbook);
         setChapterNumber(combined.length + 1);
         setCurrentChapterIndex(targetIndex);
       } else {
         const renumbered = parts.map((ch, i) => ({ ...ch, nomor: i + 1 }));
-        setEbook({
+        updatedEbook = {
           judul: finalTitle,
           penulis: 'Penulis',
           deskripsi: `Buku elektronik dengan ${renumbered.length} bagian bab.`,
@@ -305,7 +355,8 @@ export default function App() {
           dibuat_pada: new Date().toISOString(),
           total_kata: renumbered.reduce((acc, c) => acc + c.jumlah_kata, 0),
           bab: renumbered,
-        });
+        };
+        setEbook(updatedEbook);
         setChapterNumber(renumbered.length + 1);
         setCurrentChapterIndex(0);
       }
@@ -313,6 +364,11 @@ export default function App() {
       setInputText('');
       setChapterTitle('');
       setActiveTab('reader');
+
+      // Otomatis simpan ke Supabase jika database siap
+      if (isSupabaseConfigured()) {
+        await persistEbookToSupabase(updatedEbook);
+      }
     } catch (err: any) {
       console.error(err);
       alert('Gagal memproses bab: ' + (err.message || 'Format teks tidak valid.'));
@@ -339,13 +395,18 @@ export default function App() {
       ...ebook.bab.slice(chapterIndex + 1),
     ].map((ch, idx) => ({ ...ch, nomor: idx + 1 }));
 
-    setEbook((prev) => ({
-      ...prev,
+    const updatedEbook: EbookData = {
+      ...ebook,
       bab: updatedChapters,
       total_kata: updatedChapters.reduce((acc, c) => acc + c.jumlah_kata, 0),
-    }));
+    };
 
+    setEbook(updatedEbook);
     setCurrentChapterIndex(chapterIndex);
+
+    if (isSupabaseConfigured()) {
+      persistEbookToSupabase(updatedEbook);
+    }
   };
 
   // Triggered when user wants to add next chapter
@@ -399,9 +460,9 @@ export default function App() {
     try {
       if (ttsConfig.engine === 'browser') {
         // Web Speech mode
-        setEbook((prev) => ({
-          ...prev,
-          bab: prev.bab.map((b) =>
+        const updatedEbook: EbookData = {
+          ...ebook,
+          bab: ebook.bab.map((b) =>
             b.id === chapterId
               ? {
                   ...b,
@@ -411,7 +472,11 @@ export default function App() {
                 }
               : b
           ),
-        }));
+        };
+        setEbook(updatedEbook);
+        if (isSupabaseConfigured()) {
+          persistEbookToSupabase(updatedEbook);
+        }
       } else {
         // Gemini TTS API
         const response = await fetch('/api/tts', {
@@ -427,9 +492,9 @@ export default function App() {
 
         if (response.ok && (data.data_url || data.audio_url)) {
           const finalAudioUrl = data.data_url || data.audio_url;
-          setEbook((prev) => ({
-            ...prev,
-            bab: prev.bab.map((b) =>
+          const updatedEbook: EbookData = {
+            ...ebook,
+            bab: ebook.bab.map((b) =>
               b.id === chapterId
                 ? {
                     ...b,
@@ -440,12 +505,16 @@ export default function App() {
                   }
                 : b
             ),
-          }));
+          };
+          setEbook(updatedEbook);
+          if (isSupabaseConfigured()) {
+            persistEbookToSupabase(updatedEbook);
+          }
         } else if (data.canUseBrowserTTS || data.fallbackToBrowser) {
           // Graceful fallback to browser speech synthesis
-          setEbook((prev) => ({
-            ...prev,
-            bab: prev.bab.map((b) =>
+          const updatedEbook: EbookData = {
+            ...ebook,
+            bab: ebook.bab.map((b) =>
               b.id === chapterId
                 ? {
                     ...b,
@@ -456,7 +525,11 @@ export default function App() {
                   }
                 : b
             ),
-          }));
+          };
+          setEbook(updatedEbook);
+          if (isSupabaseConfigured()) {
+            persistEbookToSupabase(updatedEbook);
+          }
         } else {
           throw new Error(data.error || 'Gagal menghasilkan audio untuk bab ini.');
         }
@@ -492,10 +565,18 @@ export default function App() {
       setBatchProgress({ current: i + 1, total: ungenerated.length });
       await handleGenerateAudioForChapter(ungenerated[i].id);
       // Small pause between chapters to avoid rate spikes
-      await new Promise((resolve) => setTimeout(resolve, 300));
+      await new Promise((r) => setTimeout(r, 600));
     }
 
     setIsBatchGenerating(false);
+    setBatchProgress({ current: 0, total: 0 });
+
+    if (isSupabaseConfigured()) {
+      setEbook((current) => {
+        persistEbookToSupabase(current);
+        return current;
+      });
+    }
   };
 
   // Play / Pause logic
@@ -607,8 +688,11 @@ export default function App() {
         onOpenJson={() => setIsJsonModalOpen(true)}
         onOpenSettings={() => setIsSettingsModalOpen(true)}
         onOpenSupabase={() => setIsSupabaseModalOpen(true)}
-        isSupabaseConnected={isSupabaseConfigured()}
+        isSupabaseConnected={isSupabaseReady}
         isProcessing={isSegmenting || isBatchGenerating}
+        isSavingToDb={isSavingToDb}
+        dbSaveSuccess={dbSaveSuccess}
+        onSaveToDatabase={() => persistEbookToSupabase(ebook)}
       />
 
       {/* Main View Area */}
@@ -632,6 +716,9 @@ export default function App() {
               hasExistingChapters={ebook.bab.length > 0}
               existingChaptersCount={ebook.bab.length}
               onResetAll={handleResetAll}
+              isSupabaseConnected={isSupabaseReady}
+              isSavingToDb={isSavingToDb}
+              onOpenSupabase={() => setIsSupabaseModalOpen(true)}
             />
 
             {ebook.bab.length > 0 && (
@@ -652,6 +739,11 @@ export default function App() {
                 onAddNewChapter={handleAddNewChapter}
                 onResetBook={handleResetAll}
                 onSplitChapterIntoParts={handleSplitCurrentChapterIntoParts}
+                onPersistToDb={persistEbookToSupabase}
+                isSupabaseConnected={isSupabaseReady}
+                isSavingToDb={isSavingToDb}
+                dbSaveSuccess={dbSaveSuccess}
+                onSaveToDatabase={() => persistEbookToSupabase(ebook)}
               />
             )}
           </div>
@@ -687,9 +779,23 @@ export default function App() {
             onRefreshBooks={refreshSavedBooks}
             onOpenSupabaseModal={() => setIsSupabaseModalOpen(true)}
             isSupabaseConnected={isSupabaseReady}
+            isSavingToDb={isSavingToDb}
+            dbSaveSuccess={dbSaveSuccess}
+            onSaveToDatabase={() => persistEbookToSupabase(ebook)}
           />
         )}
       </div>
+
+      {/* Floating Supabase Auto-Save Notification */}
+      {saveToast && (
+        <div
+          id="supabase-save-toast"
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2.5 px-4 py-3 bg-neutral-900/95 text-white rounded-xl shadow-xl border border-neutral-700 text-xs sm:text-sm font-medium animate-in fade-in slide-in-from-bottom-3 duration-200"
+        >
+          <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{saveToast}</span>
+        </div>
+      )}
 
       {/* Modals */}
       <JsonOutputModal

@@ -13,6 +13,7 @@ export interface ChapterData {
 }
 
 export interface EbookData {
+  id?: string;
   judul: string;
   penulis?: string;
   deskripsi?: string;

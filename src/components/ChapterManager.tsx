@@ -17,6 +17,8 @@ import {
   PlusCircle,
   RotateCcw,
   Scissors,
+  Database,
+  Save,
 } from 'lucide-react';
 import { ChapterData, EbookData, TTSConfig } from '../types';
 
@@ -34,6 +36,11 @@ interface ChapterManagerProps {
   onAddNewChapter?: () => void;
   onResetBook?: () => void;
   onSplitChapterIntoParts?: (chapterId: string) => void;
+  onPersistToDb?: (updated: EbookData) => void;
+  isSupabaseConnected?: boolean;
+  isSavingToDb?: boolean;
+  dbSaveSuccess?: boolean | null;
+  onSaveToDatabase?: () => void;
 }
 
 export const ChapterManager: React.FC<ChapterManagerProps> = ({
@@ -50,6 +57,11 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
   onAddNewChapter,
   onResetBook,
   onSplitChapterIntoParts,
+  onPersistToDb,
+  isSupabaseConnected = false,
+  isSavingToDb = false,
+  dbSaveSuccess = null,
+  onSaveToDatabase,
 }) => {
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
@@ -64,24 +76,32 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
   };
 
   const handleSaveEdit = (chapterId: string) => {
-    setEbook((prev) => ({
-      ...prev,
-      bab: prev.bab.map((b) => {
-        if (b.id === chapterId) {
-          const newWords = editText.trim().split(/\s+/).filter(Boolean).length;
-          return {
-            ...b,
-            judul_bab: editTitle.trim() || b.judul_bab,
-            teks: editText.trim(),
-            jumlah_kata: newWords,
-            // Reset audio if text changed
-            audio_status: b.teks !== editText.trim() ? 'idle' : b.audio_status,
-            audio_url: b.teks !== editText.trim() ? undefined : b.audio_url,
-          };
-        }
-        return b;
-      }),
-    }));
+    const updatedBab = ebook.bab.map((b) => {
+      if (b.id === chapterId) {
+        const newWords = editText.trim().split(/\s+/).filter(Boolean).length;
+        return {
+          ...b,
+          judul_bab: editTitle.trim() || b.judul_bab,
+          teks: editText.trim(),
+          jumlah_kata: newWords,
+          // Reset audio if text changed
+          audio_status: b.teks !== editText.trim() ? ('idle' as const) : b.audio_status,
+          audio_url: b.teks !== editText.trim() ? undefined : b.audio_url,
+        };
+      }
+      return b;
+    });
+
+    const updatedEbook: EbookData = {
+      ...ebook,
+      bab: updatedBab,
+      total_kata: updatedBab.reduce((acc, curr) => acc + curr.jumlah_kata, 0),
+    };
+
+    setEbook(updatedEbook);
+    if (onPersistToDb) {
+      onPersistToDb(updatedEbook);
+    }
     setEditingChapterId(null);
   };
 
@@ -91,14 +111,18 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
       return;
     }
     if (confirm('Hapus bab ini dari buku?')) {
-      setEbook((prev) => {
-        const remaining = prev.bab.filter((b) => b.id !== chapterId);
-        return {
-          ...prev,
-          bab: remaining.map((ch, idx) => ({ ...ch, nomor: idx + 1 })),
-          total_kata: remaining.reduce((acc, curr) => acc + curr.jumlah_kata, 0),
-        };
-      });
+      const remaining = ebook.bab.filter((b) => b.id !== chapterId);
+      const renumbered = remaining.map((ch, idx) => ({ ...ch, nomor: idx + 1 }));
+      const updatedEbook: EbookData = {
+        ...ebook,
+        bab: renumbered,
+        total_kata: renumbered.reduce((acc, curr) => acc + curr.jumlah_kata, 0),
+      };
+
+      setEbook(updatedEbook);
+      if (onPersistToDb) {
+        onPersistToDb(updatedEbook);
+      }
     }
   };
 
@@ -144,6 +168,38 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
                 </>
               )}
             </button>
+
+            {/* Direct Save to Supabase button */}
+            {isSupabaseConnected && onSaveToDatabase && (
+              <button
+                id="manager-save-db-btn"
+                onClick={onSaveToDatabase}
+                disabled={isSavingToDb}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl border transition-all cursor-pointer ${
+                  dbSaveSuccess
+                    ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                    : 'border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50 shadow-xs'
+                }`}
+                title="Simpan buku dan bab ke database Supabase"
+              >
+                {isSavingToDb ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                    <span>Menyimpan ke DB...</span>
+                  </>
+                ) : dbSaveSuccess ? (
+                  <>
+                    <Check className="w-3.5 h-3.5 text-emerald-600" />
+                    <span className="text-emerald-700">Tersimpan ke DB</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="w-3.5 h-3.5 text-emerald-600" />
+                    <span>Simpan ke DB</span>
+                  </>
+                )}
+              </button>
+            )}
 
             <button
               id="jump-to-reader-btn"

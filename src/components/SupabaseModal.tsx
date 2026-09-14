@@ -161,8 +161,11 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
     setIsSaving(true);
     setStatusMessage(null);
     try {
-      const res = await saveEbookToSupabase(ebook);
+      const res = await saveEbookToSupabase(ebook, ebook.id);
       if (res.success) {
+        if (res.bookId) {
+          ebook.id = res.bookId;
+        }
         setStatusMessage({
           type: 'success',
           text: `Buku "${ebook.judul || 'Tanpa Judul'}" (${ebook.bab.length} bab) berhasil disimpan ke Supabase!`,

@@ -81,19 +81,35 @@ export async function saveEbookToSupabase(
   }
 
   try {
-    let bookId = existingBookId;
+    let bookId = existingBookId || ebook.id;
+    const normTitle = (ebook.judul || 'Buku Narasi Elektronik').trim();
+
+    // If no explicit ID provided, check if a book with the exact same title already exists
+    if (!bookId && normTitle) {
+      const { data: existingBooks } = await supabase
+        .from('books')
+        .select('id')
+        .ilike('title', normTitle)
+        .order('updated_at', { ascending: false })
+        .limit(1);
+
+      if (existingBooks && existingBooks.length > 0) {
+        bookId = existingBooks[0].id;
+      }
+    }
 
     if (bookId) {
       // Update existing book
       const { error: updateError } = await supabase
         .from('books')
         .update({
-          title: ebook.judul || 'Buku Narasi Elektronik',
+          title: normTitle,
           author: ebook.penulis || 'Penulis',
           description: ebook.deskripsi || '',
           language: ebook.bahasa || 'id-ID',
           total_words: ebook.total_kata,
           status: 'published',
+          updated_at: new Date().toISOString(),
         })
         .eq('id', bookId);
 
@@ -103,7 +119,7 @@ export async function saveEbookToSupabase(
       const { data: newBook, error: insertError } = await supabase
         .from('books')
         .insert({
-          title: ebook.judul || 'Buku Narasi Elektronik',
+          title: normTitle,
           author: ebook.penulis || 'Penulis',
           description: ebook.deskripsi || '',
           language: ebook.bahasa || 'id-ID',
@@ -201,6 +217,7 @@ export async function loadEbookWithChapters(bookId: string): Promise<EbookData |
   }));
 
   return {
+    id: book.id,
     judul: book.title,
     penulis: book.author || 'Penulis',
     deskripsi: book.description || '',

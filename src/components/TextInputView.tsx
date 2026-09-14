@@ -13,6 +13,7 @@ import {
   SplitSquareVertical,
   Maximize2,
   ListOrdered,
+  Database,
 } from 'lucide-react';
 
 export type SplitMode =
@@ -43,6 +44,9 @@ interface TextInputViewProps {
   hasExistingChapters: boolean;
   existingChaptersCount: number;
   onResetAll: () => void;
+  isSupabaseConnected?: boolean;
+  isSavingToDb?: boolean;
+  onOpenSupabase?: () => void;
 }
 
 export const TextInputView: React.FC<TextInputViewProps> = ({
@@ -62,6 +66,9 @@ export const TextInputView: React.FC<TextInputViewProps> = ({
   hasExistingChapters,
   existingChaptersCount,
   onResetAll,
+  isSupabaseConnected = false,
+  isSavingToDb = false,
+  onOpenSupabase,
 }) => {
   const [dragOver, setDragOver] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -434,14 +441,32 @@ Jika memilih "Bagi Part Otomatis", teks panjang ini akan dibagi menjadi Bab ${ch
             )}
           </div>
 
-          <div className="flex items-center gap-2 w-full sm:w-auto">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
+            {isSupabaseConnected ? (
+              <div className="text-right sm:text-left pr-1 hidden lg:block">
+                <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-1 rounded-lg">
+                  <Database className="w-3 h-3 text-emerald-600" />
+                  Auto-Save ke Supabase Aktif
+                </span>
+              </div>
+            ) : onOpenSupabase ? (
+              <button
+                type="button"
+                onClick={onOpenSupabase}
+                className="text-[11px] text-amber-700 hover:text-amber-900 underline hidden lg:inline-flex items-center gap-1 pr-1 cursor-pointer"
+              >
+                <Database className="w-3 h-3 text-amber-600" />
+                Hubungkan Supabase untuk Cloud Save
+              </button>
+            ) : null}
+
             {hasExistingChapters && (
               <button
                 type="button"
                 id="save-new-book-btn"
                 onClick={() => onProcessChapter(false)}
-                disabled={wordCount === 0 || wordCount > maxWords || isProcessing}
-                className="px-3.5 py-2.5 rounded-xl font-medium text-xs text-neutral-700 bg-white border border-neutral-300 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                disabled={wordCount === 0 || wordCount > maxWords || isProcessing || isSavingToDb}
+                className="px-3.5 py-2.5 rounded-xl font-medium text-xs text-neutral-700 bg-white border border-neutral-300 hover:bg-neutral-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
                 title="Gantikan buku saat ini dengan buku baru"
               >
                 Mulai Sebagai Buku Baru
@@ -452,18 +477,22 @@ Jika memilih "Bagi Part Otomatis", teks panjang ini akan dibagi menjadi Bab ${ch
               type="button"
               id="process-chapter-btn"
               onClick={() => onProcessChapter(true)}
-              disabled={wordCount === 0 || wordCount > maxWords || isProcessing}
-              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm text-white bg-amber-600 hover:bg-amber-700 shadow-xs disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              disabled={wordCount === 0 || wordCount > maxWords || isProcessing || isSavingToDb}
+              className="flex-1 sm:flex-none inline-flex items-center justify-center gap-2 px-6 py-2.5 rounded-xl font-semibold text-sm text-white bg-amber-600 hover:bg-amber-700 shadow-xs disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
             >
-              {isProcessing ? (
+              {isProcessing || isSavingToDb ? (
                 <>
                   <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Memproses Bab {chapterNumber}...</span>
+                  <span>
+                    {isSavingToDb
+                      ? 'Menyimpan ke Database Supabase...'
+                      : `Memproses & Menyimpan Bab ${chapterNumber}...`}
+                  </span>
                 </>
               ) : hasExistingChapters ? (
                 <>
                   <PlusCircle className="w-4 h-4" />
-                  <span>Tambahkan Bab {chapterNumber} ke Buku</span>
+                  <span>Tambahkan & Simpan Bab {chapterNumber}</span>
                 </>
               ) : (
                 <>

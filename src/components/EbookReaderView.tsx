@@ -24,6 +24,7 @@ import {
   Clock,
   CheckCircle2,
   FileText,
+  Save,
 } from 'lucide-react';
 import { ChapterData, EbookData } from '../types';
 import { SupabaseBookSummary } from '../services/supabaseService';
@@ -53,6 +54,9 @@ interface EbookReaderViewProps {
   onRefreshBooks?: () => void;
   onOpenSupabaseModal?: () => void;
   isSupabaseConnected?: boolean;
+  isSavingToDb?: boolean;
+  dbSaveSuccess?: boolean | null;
+  onSaveToDatabase?: () => void;
 }
 
 type ThemeMode = 'light' | 'sepia' | 'dark';
@@ -82,6 +86,9 @@ export const EbookReaderView: React.FC<EbookReaderViewProps> = ({
   onRefreshBooks,
   onOpenSupabaseModal,
   isSupabaseConnected = false,
+  isSavingToDb = false,
+  dbSaveSuccess = null,
+  onSaveToDatabase,
 }) => {
   const [theme, setTheme] = useState<ThemeMode>('light');
   const [fontMode, setFontMode] = useState<FontMode>('serif');
@@ -251,6 +258,40 @@ export const EbookReaderView: React.FC<EbookReaderViewProps> = ({
             <List className="w-4 h-4" />
             <span>Daftar Isi Bab</span>
           </button>
+
+          {/* Quick Database Save Status & Trigger */}
+          {isSupabaseConnected && onSaveToDatabase && (
+            <button
+              id="reader-save-to-db-btn"
+              onClick={onSaveToDatabase}
+              disabled={isSavingToDb}
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+                dbSaveSuccess
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
+                  : theme === 'dark'
+                  ? 'border-neutral-700 bg-neutral-800 hover:bg-neutral-700 text-neutral-200'
+                  : 'border-neutral-200 bg-white hover:bg-neutral-50 text-neutral-700'
+              }`}
+              title="Simpan buku dan bab saat ini ke database Supabase"
+            >
+              {isSavingToDb ? (
+                <>
+                  <RefreshCw className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+                  <span className="hidden sm:inline">Menyimpan...</span>
+                </>
+              ) : dbSaveSuccess ? (
+                <>
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="hidden sm:inline">Tersimpan ke DB</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-3.5 h-3.5 text-emerald-600" />
+                  <span className="hidden sm:inline">Simpan ke DB</span>
+                </>
+              )}
+            </button>
+          )}
 
           <span className="hidden md:inline-block text-xs opacity-60 font-medium truncate max-w-[200px]">
             Bab {currentChapterIndex + 1} dari {ebook.bab.length}

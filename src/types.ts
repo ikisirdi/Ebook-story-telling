@@ -33,9 +33,13 @@ export interface StandardEbookOutput {
 
 export type VoiceName = 'Kore' | 'Puck' | 'Charon' | 'Fenrir' | 'Zephyr';
 
+export type NarrationStyle = 'natural' | 'storytelling' | 'calm' | 'formal';
+
 export interface TTSConfig {
   voice: VoiceName;
   speed: number;
   pitch: number;
   engine: 'gemini' | 'browser';
+  style?: NarrationStyle;
+  optimizeIndonesianText?: boolean;
 }

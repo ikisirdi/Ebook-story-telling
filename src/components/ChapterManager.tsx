@@ -257,9 +257,16 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
             </span>
           </div>
           <div className="p-3 bg-neutral-50 rounded-xl border border-neutral-100">
-            <span className="text-[11px] text-neutral-500 font-medium block">Suara Narasi</span>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-neutral-500 font-medium">Suara Narasi</span>
+              <span className="text-[9px] bg-emerald-100 text-emerald-800 font-bold px-1.5 py-0.2 rounded-full">
+                Anti-Terbata
+              </span>
+            </div>
             <span className="text-sm font-semibold text-neutral-800 truncate block mt-0.5">
-              {ttsConfig.engine === 'gemini' ? `Gemini (${ttsConfig.voice})` : 'Web Speech ID'}
+              {ttsConfig.engine === 'gemini'
+                ? `Gemini ${ttsConfig.voice} (${ttsConfig.style === 'storytelling' ? 'Bercerita' : ttsConfig.style === 'calm' ? 'Tenang' : 'Alami'})`
+                : 'Web Speech ID'}
             </span>
           </div>
         </div>

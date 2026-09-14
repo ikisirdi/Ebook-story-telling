@@ -53,6 +53,8 @@ export default function App() {
     speed: 1.0,
     pitch: 1.0,
     engine: 'gemini',
+    style: 'natural',
+    optimizeIndonesianText: true,
   });
 
   // Supabase Saved Books State for direct in-navigation reading
@@ -485,6 +487,7 @@ export default function App() {
           body: JSON.stringify({
             text: chapter.teks,
             voice: ttsConfig.voice,
+            style: ttsConfig.style || 'natural',
           }),
         });
 

@@ -162,14 +162,138 @@ export function fallbackSegmentText(text: string, customTitle?: string) {
   };
 }
 
+// Indonesian Text Normalizer for Natural Audio Narration (Anti-terbata-bata)
+const ROMAN_NUMERALS_MAP: Record<string, string> = {
+  I: 'Satu',
+  II: 'Dua',
+  III: 'Tiga',
+  IV: 'Empat',
+  V: 'Lima',
+  VI: 'Enam',
+  VII: 'Tujuh',
+  VIII: 'Delapan',
+  IX: 'Sembilan',
+  X: 'Sepuluh',
+  XI: 'Sebelas',
+  XII: 'Dua Belas',
+  XIII: 'Tiga Belas',
+  XIV: 'Empat Belas',
+  XV: 'Lima Belas',
+  XVI: 'Enam Belas',
+  XVII: 'Tujuh Belas',
+  XVIII: 'Delapan Belas',
+  XIX: 'Sembilan Belas',
+  XX: 'Dua Puluh',
+};
+
+const ID_ABBREVIATIONS: Array<[RegExp, string | ((...args: any[]) => string)]> = [
+  [/\bdll\.?/gi, 'dan lain-lain'],
+  [/\bdsb\.?/gi, 'dan sebagainya'],
+  [/\bdst\.?/gi, 'dan seterusnya'],
+  [/\bdkk\.?/gi, 'dan kawan-kawan'],
+  [/\bhlm\.?\s*(\d+)/gi, 'halaman $1'],
+  [/\bhlm\.?/gi, 'halaman'],
+  [/\bhal\.?\s*(\d+)/gi, 'halaman $1'],
+  [/\bhal\.?/gi, 'halaman'],
+  [/\bno\.?\s*(\d+)/gi, 'nomor $1'],
+  [/\bno\.?/gi, 'nomor'],
+  [/\bdr\.\s+/gi, 'dokter '],
+  [/\bDr\.\s+/g, 'Doktor '],
+  [/\bprof\.\s+/gi, 'profesor '],
+  [/\bProf\.\s+/g, 'Profesor '],
+  [/\bs\/d\b/gi, 'sampai dengan'],
+  [/\bs\.d\./gi, 'sampai dengan'],
+  [/\bttg\.?/gi, 'tentang'],
+  [/\btsb\.?/gi, 'tersebut'],
+  [/\bthn\.?/gi, 'tahun'],
+  [/\bbln\.?/gi, 'bulan'],
+  [/\b(\d+)\s*%\b/g, '$1 persen'],
+  [/\b(\d+)\s*kg\b/gi, '$1 kilogram'],
+  [/\b(\d+)\s*km\b/gi, '$1 kilometer'],
+  [/\b(\d+)\s*m\b/gi, '$1 meter'],
+  [/\b(\d+)\s*cm\b/gi, '$1 sentimeter'],
+  [/\bRp\.?\s*([\d\.]+)/gi, (_m, p1) => `${p1.replace(/\./g, '')} rupiah`],
+  [/\byg\b/gi, 'yang'],
+  [/\bdgn\b/gi, 'dengan'],
+  [/\butk\b/gi, 'untuk'],
+  [/\bpd\b/gi, 'pada'],
+  [/\bsdh\b/gi, 'sudah'],
+  [/\bblm\b/gi, 'belum'],
+  [/\bkrn\b/gi, 'karena'],
+  [/\bbkn\b/gi, 'bukan'],
+  [/\btetep\b/gi, 'tetap'],
+];
+
+export function normalizeIndonesianForSpeech(rawText: string): string {
+  if (!rawText || typeof rawText !== 'string') return '';
+  let text = rawText;
+
+  // 1. Bersihkan karakter format Markdown
+  text = text
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/```[\s\S]*?```/g, '')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/_([^_]+)_/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+    .replace(/\[\d+\]/g, '')
+    .replace(/^>\s*/gm, '')
+    .replace(/^[-*_]{3,}\s*$/gm, '')
+    .replace(/^[\s]*[-*+]\s+/gm, '');
+
+  // 2. Normalisasi Bab angka Romawi: "Bab IV" -> "Bab Empat"
+  text = text.replace(
+    /\b(Bab|BAB|Bagian|BAGIAN)\s+([IVXLCDM]+)\b/g,
+    (_m, prefix, roman) => {
+      const spelled = ROMAN_NUMERALS_MAP[roman.toUpperCase()];
+      return spelled ? `${prefix} ${spelled}` : `${prefix} ${roman}`;
+    }
+  );
+
+  // 3. Normalisasi tanda baca yang membuat TTS terbata-bata
+  text = text.replace(/\.{3,}/g, ', ');
+  text = text.replace(/\s*—\s*/g, ', ');
+  text = text.replace(/\s*--\s*/g, ', ');
+  text = text.replace(/\s*–\s*/g, ', ');
+
+  // 4. Perluas singkatan
+  for (const [regex, replacement] of ID_ABBREVIATIONS) {
+    if (typeof replacement === 'function') {
+      text = text.replace(regex, replacement as any);
+    } else {
+      text = text.replace(regex, replacement);
+    }
+  }
+
+  // 5. Rapikan spasi tanda baca
+  text = text
+    .replace(/\?+/g, '?')
+    .replace(/!+/g, '!')
+    .replace(/,+/g, ',')
+    .replace(/\s*,\s*/g, ', ')
+    .replace(/\s*\.\s*/g, '. ')
+    .replace(/\s*\?\s*/g, '? ')
+    .replace(/\s*!\s*/g, '! ');
+
+  return text
+    .split('\n')
+    .map((line) => line.replace(/[ \t]+/g, ' ').trim())
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 // Helper to split text into natural narration chunks for TTS
-export function splitTextIntoTTSChunks(text: string, maxChunkLength = 850): string[] {
-  const clean = text.trim();
+export function splitTextIntoTTSChunks(text: string, maxChunkLength = 2400): string[] {
+  const clean = normalizeIndonesianForSpeech(text);
   if (clean.length <= maxChunkLength) {
     return [clean];
   }
 
-  // Split by paragraphs first
+  // Split strictly by paragraphs first to preserve full sentence cadence
   const paragraphs = clean.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
   const chunks: string[] = [];
   let current = '';
@@ -190,8 +314,8 @@ export function splitTextIntoTTSChunks(text: string, maxChunkLength = 850): stri
       continue;
     }
 
-    // Paragraph is longer than maxChunkLength, split by sentences
-    const sentenceRegex = /[^.!?\n]+(?:[.!?\n]+|$)/g;
+    // Paragraph is longer than maxChunkLength, split strictly by complete sentences
+    const sentenceRegex = /[^.!?\n]+[.!?\n]+(?:\s+|$)/g;
     const sentences = para.match(sentenceRegex) || [para];
     for (const sentence of sentences) {
       const sTrim = sentence.trim();
@@ -207,7 +331,7 @@ export function splitTextIntoTTSChunks(text: string, maxChunkLength = 850): stri
         if (sTrim.length <= maxChunkLength) {
           current = sTrim;
         } else {
-          // Hard break on space if sentence is unusually long
+          // Hard break on word boundary only if single sentence exceeds limit
           let rem = sTrim;
           while (rem.length > maxChunkLength) {
             let splitIdx = rem.lastIndexOf(' ', maxChunkLength);
@@ -490,12 +614,13 @@ apiRouter.post('/tts', async (req: Request, res: Response) => {
         // ignore
       }
     }
-    const { text, voice = 'Kore', apiKey: customKey } = body || {};
+    const { text, voice = 'Kore', style = 'natural', apiKey: customKey } = body || {};
     if (!text || typeof text !== 'string' || text.trim().length === 0) {
       return res.status(400).json({ error: 'Teks naskah untuk narasi suara masih kosong.' });
     }
 
     const cleanText = text.trim();
+    const normalizedText = normalizeIndonesianForSpeech(cleanText);
     const apiKey =
       process.env.GEMINI_API_KEY ||
       (req.headers['x-gemini-api-key'] as string) ||
@@ -526,17 +651,33 @@ apiRouter.post('/tts', async (req: Request, res: Response) => {
       },
     });
 
-    // Split into natural narration chunks (up to 4 chunks = ~3400 characters, ~500-600 words)
-    const textChunks = splitTextIntoTTSChunks(cleanText, 850);
-    // Limit to max 4 chunks per HTTP request to avoid serverless timeout
-    const chunksToProcess = textChunks.slice(0, 4);
+    // Gunakan segmentasi paragraf yang luas (hingga 2500 karakter per segmen)
+    // agar naskah bab dapat dibacakan secara utuh dalam satu tarikan nafas dan intonasi tanpa terpotong
+    const textChunks = splitTextIntoTTSChunks(normalizedText, 2500);
+    // Batasi maksimum 3 segmen (~7500 karakter / ~1200 kata) per panggilan HTTP
+    const chunksToProcess = textChunks.slice(0, 3);
+
+    // Instruksi intonasi naratif yang disesuaikan agar tidak terbata-bata
+    let styleInstruction =
+      'Bacakan narasi buku berikut dengan intonasi mendongeng yang alami, artikulasi kata bahasa Indonesia yang fasih, tempo tenang yang mengalir lancar, dan tanpa jeda canggung:';
+    if (style === 'storytelling') {
+      styleInstruction =
+        'Bacakan kisah berikut dengan intonasi bercerita yang hidup, penuh penghayatan, artikulasi kata jelas, dan tempo yang mengalir mulus:';
+    } else if (style === 'calm') {
+      styleInstruction =
+        'Bacakan naskah berikut dengan suara lembut, tenang, tempo santai yang teratur, dan intonasi ramah yang mengalir damai:';
+    } else if (style === 'formal') {
+      styleInstruction =
+        'Bacakan teks berikut dengan artikulasi jernih, intonasi terstruktur dan berwibawa dalam bahasa Indonesia baku yang fasih:';
+    }
 
     const pcmBuffers: Buffer[] = [];
-    const silenceBuffer = Buffer.alloc(Math.floor(24000 * 2 * 0.25)); // 250ms silence between chunks
+    // Jeda alami antar-segmen yang sangat halus (80 milidetik), bukan jeda hening kaku 250ms
+    const naturalBreathPause = Buffer.alloc(Math.floor(24000 * 2 * 0.08));
 
     for (let cIdx = 0; cIdx < chunksToProcess.length; cIdx++) {
       const chunk = chunksToProcess[cIdx];
-      const narrationPrompt = `Bacakan naskah buku berikut dengan artikulasi jernih, tempo tenang, dan intonasi naratif yang alami dalam bahasa Indonesia:\n\n${chunk}`;
+      const narrationPrompt = `${styleInstruction}\n\n${chunk}`;
 
       const ttsResponse = await ai.models.generateContent({
         model: 'gemini-3.1-flash-tts-preview',
@@ -555,7 +696,7 @@ apiRouter.post('/tts', async (req: Request, res: Response) => {
       if (base64Audio) {
         const rawPcm = Buffer.from(base64Audio, 'base64');
         if (pcmBuffers.length > 0) {
-          pcmBuffers.push(silenceBuffer);
+          pcmBuffers.push(naturalBreathPause);
         }
         pcmBuffers.push(rawPcm);
       }

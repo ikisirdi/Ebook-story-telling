@@ -357,26 +357,30 @@ const SUPABASE_CONFIG_FILE = path.join(process.cwd(), '.supabase-config.json');
 const SUPABASE_TMP_CONFIG_FILE = '/tmp/.supabase-config.json';
 let inMemorySupabaseConfig: { url: string; key: string } | null = null;
 
-function getStoredSupabaseConfig(): { url: string; key: string } {
-  // 1. Environment variables have priority
-  const envUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-  const envKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
-  if (envUrl && envKey) {
-    return { url: envUrl.trim(), key: envKey.trim() };
+let isSupabaseLocallyDisabled = false;
+
+function getStoredSupabaseConfig(): { url: string; key: string; disabled?: boolean } {
+  // Check if disabled by user
+  if (isSupabaseLocallyDisabled) {
+    return { url: '', key: '', disabled: true };
   }
 
-  // 2. In-memory cache
+  // 1. In-memory cache
   if (inMemorySupabaseConfig && inMemorySupabaseConfig.url && inMemorySupabaseConfig.key) {
     return inMemorySupabaseConfig;
   }
 
-  // 3. Read from persistent file if available
+  // 2. Read from persistent file if available
   const candidateFiles = [SUPABASE_CONFIG_FILE, SUPABASE_TMP_CONFIG_FILE];
   for (const file of candidateFiles) {
     try {
       if (fs.existsSync(file)) {
         const raw = fs.readFileSync(file, 'utf-8');
         const data = JSON.parse(raw);
+        if (data && data.disabled) {
+          isSupabaseLocallyDisabled = true;
+          return { url: '', key: '', disabled: true };
+        }
         if (data && data.url && data.key) {
           inMemorySupabaseConfig = { url: String(data.url).trim(), key: String(data.key).trim() };
           return inMemorySupabaseConfig;
@@ -387,12 +391,20 @@ function getStoredSupabaseConfig(): { url: string; key: string } {
     }
   }
 
+  // 3. Environment variables
+  const envUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+  const envKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
+  if (envUrl && envKey) {
+    return { url: envUrl.trim(), key: envKey.trim() };
+  }
+
   return { url: '', key: '' };
 }
 
 function saveStoredSupabaseConfig(url: string, key: string): boolean {
+  isSupabaseLocallyDisabled = false;
   inMemorySupabaseConfig = { url: url.trim(), key: key.trim() };
-  const payload = JSON.stringify({ url: url.trim(), key: key.trim(), savedAt: new Date().toISOString() }, null, 2);
+  const payload = JSON.stringify({ url: url.trim(), key: key.trim(), disabled: false, savedAt: new Date().toISOString() }, null, 2);
   let saved = false;
 
   try {
@@ -413,12 +425,14 @@ function saveStoredSupabaseConfig(url: string, key: string): boolean {
 }
 
 function clearStoredSupabaseConfig(): void {
+  isSupabaseLocallyDisabled = true;
   inMemorySupabaseConfig = null;
+  const payload = JSON.stringify({ disabled: true, clearedAt: new Date().toISOString() }, null, 2);
   try {
-    if (fs.existsSync(SUPABASE_CONFIG_FILE)) fs.unlinkSync(SUPABASE_CONFIG_FILE);
+    fs.writeFileSync(SUPABASE_CONFIG_FILE, payload, 'utf-8');
   } catch {}
   try {
-    if (fs.existsSync(SUPABASE_TMP_CONFIG_FILE)) fs.unlinkSync(SUPABASE_TMP_CONFIG_FILE);
+    fs.writeFileSync(SUPABASE_TMP_CONFIG_FILE, payload, 'utf-8');
   } catch {}
 }
 
@@ -430,6 +444,7 @@ apiRouter.get('/supabase-config', (_req: Request, res: Response) => {
   const config = getStoredSupabaseConfig();
   res.json({
     configured: Boolean(config.url && config.key),
+    disabled: Boolean(config.disabled),
     url: config.url,
     key: config.key,
   });
@@ -443,11 +458,11 @@ apiRouter.post('/supabase-config', (req: Request, res: Response) => {
         body = JSON.parse(body);
       } catch {}
     }
-    const { url, key, reset } = body || {};
+    const { url, key, reset, disabled } = body || {};
 
-    if (reset) {
+    if (reset || disabled) {
       clearStoredSupabaseConfig();
-      return res.json({ success: true, message: 'Kredensial Supabase berhasil dibersihkan.' });
+      return res.json({ success: true, disabled: true, message: 'Kredensial Supabase berhasil dibersihkan.' });
     }
 
     if (!url || !key) {
@@ -599,6 +614,151 @@ ${trimmed.slice(0, 80000)}
       ...fallbackResult,
       source: 'heuristic_fallback',
       warning: err.message || 'Gagal memanggil Gemini, dialihkan ke segmentasi lokal otomatis.',
+    });
+  }
+});
+
+// Translate Story / Chapter to Natural Indonesian API
+apiRouter.post('/translate', async (req: Request, res: Response) => {
+  try {
+    let body = req.body;
+    if (typeof body === 'string') {
+      try {
+        body = JSON.parse(body);
+      } catch {}
+    }
+
+    const { text, title, style = 'sastra', apiKey: customKey } = body || {};
+
+    if (!text || typeof text !== 'string' || text.trim().length === 0) {
+      return res.status(400).json({ error: 'Teks naskah untuk diterjemahkan wajib diisi.' });
+    }
+
+    const trimmed = text.trim();
+    const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+
+    const apiKey =
+      process.env.GEMINI_API_KEY ||
+      (req.headers['x-gemini-api-key'] as string) ||
+      customKey;
+
+    if (!apiKey) {
+      return res.status(503).json({
+        error: 'Kunci Gemini API belum diatur pada environment server. Terjemahan AI memerlukan Gemini API.',
+      });
+    }
+
+    const ai = new GoogleGenAI({
+      apiKey,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        },
+      },
+    });
+
+    let styleDescription = 'Gaya novel sastra Indonesia yang kaya diksi, indah, dan mengalir hidup.';
+    if (style === 'alami') {
+      styleDescription = 'Gaya kontemporer yang luwes, segar, dan nyaman dibaca tanpa kesan kaku.';
+    } else if (style === 'santai') {
+      styleDescription = 'Gaya santai dan dinamis, terutama dalam percakapan dialog antar tokoh.';
+    }
+
+    const prompt = `Anda adalah seorang penerjemah novel fiksi, sastrawan, dan editor naskah cerita profesional Indonesia.
+Tugas Anda adalah menerjemahkan naskah cerita berikut ke dalam Bahasa Indonesia dengan kualitas novel profesional.
+
+Prinsip Penerjemahan Cerita:
+1. Aliran Cerita & Diksi Alami:
+   - Terjemahkan narasi dan dialog menjadi Bahasa Indonesia yang luwes, hidup, dan memikat.
+   - HINDARI terjemahan harfiah kata-per-kata yang kaku dan canggung.
+   - Gunakan idiom dan padanan kata sastra Indonesia yang sepadan dengan konteks aslinya.
+2. Karakter & Istilah Khusus (World-Building):
+   - Pertahankan nama karakter, julukan fiksi, dan nama tempat khusus sebagaimana aslinya (misalnya: "Arthur", "New York", "Excalibur").
+   - Jangan menerjemahkan nama orang sembarangan.
+3. Dialog Tokoh:
+   - Dialog harus terdengar seperti percakapan alami dalam bahasa Indonesia.
+4. Struktur & Tanda Baca:
+   - Pertahankan seluruh pembagian paragraf, baris baru, tanda petik percakapan, serta pemisah adegan seperti '***' atau '---'.
+   - Terjemahkan SELURUH naskah tanpa memotong, meringkas, atau menghilangkan bagian cerita apa pun.
+5. Judul:
+   - Jika disediakan judul naskah, terjemahkan atau adaptasi judul tersebut ke dalam Bahasa Indonesia yang berkesan dan puitis.
+
+Gaya Narasi: ${styleDescription}
+${title ? `Judul Naskah Asli: "${title}"` : ''}
+
+Naskah Asli untuk Diterjemahkan:
+"""
+${trimmed}
+"""`;
+
+    const candidateModels = ['gemini-3.8-flash', 'gemini-flash-latest', 'gemini-3.1-flash-lite'];
+    let response: any = null;
+    let lastError: any = null;
+
+    for (const modelName of candidateModels) {
+      try {
+        response = await ai.models.generateContent({
+          model: modelName,
+          contents: prompt,
+          config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+              type: Type.OBJECT,
+              properties: {
+                translatedText: {
+                  type: Type.STRING,
+                  description: 'Naskah lengkap hasil terjemahan dalam Bahasa Indonesia yang mengalir alami dan utuh tanpa potongan',
+                },
+                translatedTitle: {
+                  type: Type.STRING,
+                  description: 'Judul naskah yang sudah diterjemahkan ke Bahasa Indonesia',
+                },
+                detectedSourceLanguage: {
+                  type: Type.STRING,
+                  description: 'Bahasa sumber yang terdeteksi, misal: English, Japanese, Mandarin, Spanish, dll.',
+                },
+                styleNotes: {
+                  type: Type.STRING,
+                  description: 'Catatan ringkas nuansa sastra',
+                },
+              },
+              required: ['translatedText'],
+            },
+          },
+        });
+        if (response && response.text) {
+          break;
+        }
+      } catch (err: any) {
+        lastError = err;
+        console.warn(`[Translate] Model ${modelName} returned error (${err.status || err.message}), trying fallback...`);
+      }
+    }
+
+    if (!response || !response.text) {
+      throw lastError || new Error('Gagal memproses terjemahan dengan model AI.');
+    }
+
+    const parsed = JSON.parse(response.text || '{}');
+    if (!parsed.translatedText) {
+      throw new Error('Hasil terjemahan dari AI kosong.');
+    }
+
+    const translatedWords = parsed.translatedText.split(/\s+/).filter(Boolean).length;
+
+    res.json({
+      success: true,
+      translatedText: parsed.translatedText,
+      translatedTitle: parsed.translatedTitle || title,
+      detectedSourceLanguage: parsed.detectedSourceLanguage || 'Otomatis',
+      styleNotes: parsed.styleNotes || '',
+      originalWordCount: wordCount,
+      translatedWordCount: translatedWords,
+    });
+  } catch (err: any) {
+    console.error('Error during story translation:', err);
+    res.status(500).json({
+      error: err.message || 'Gagal menerjemahkan naskah cerita ke Bahasa Indonesia.',
     });
   }
 });

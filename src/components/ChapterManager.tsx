@@ -19,8 +19,11 @@ import {
   Scissors,
   Database,
   Save,
+  Languages,
 } from 'lucide-react';
 import { ChapterData, EbookData, TTSConfig } from '../types';
+import { TranslationModal } from './TranslationModal';
+import { translateStoryToIndonesian } from '../services/translationService';
 
 interface ChapterManagerProps {
   ebook: EbookData;
@@ -66,6 +69,107 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
   const [editingChapterId, setEditingChapterId] = useState<string | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editText, setEditText] = useState('');
+  const [chapterToTranslate, setChapterToTranslate] = useState<ChapterData | null>(null);
+  const [isBatchTranslating, setIsBatchTranslating] = useState<boolean>(false);
+  const [batchTranslateProgress, setBatchTranslateProgress] = useState<{ current: number; total: number }>({
+    current: 0,
+    total: 0,
+  });
+
+  const handleApplyChapterTranslation = (translatedText: string, translatedTitle?: string) => {
+    if (!chapterToTranslate) return;
+    const targetId = chapterToTranslate.id;
+    const newWords = translatedText.trim().split(/\s+/).filter(Boolean).length;
+
+    const updatedBab = ebook.bab.map((b) => {
+      if (b.id === targetId) {
+        return {
+          ...b,
+          judul_bab: translatedTitle || b.judul_bab,
+          teks: translatedText.trim(),
+          jumlah_kata: newWords,
+          audio_status: 'idle' as const,
+          audio_url: undefined,
+        };
+      }
+      return b;
+    });
+
+    const updatedEbook: EbookData = {
+      ...ebook,
+      bab: updatedBab,
+      total_kata: updatedBab.reduce((acc, curr) => acc + curr.jumlah_kata, 0),
+    };
+
+    setEbook(updatedEbook);
+    if (onPersistToDb) {
+      onPersistToDb(updatedEbook);
+    }
+    setChapterToTranslate(null);
+  };
+
+  const handleBatchTranslateAll = async () => {
+    if (ebook.bab.length === 0) return;
+    const confirmed = window.confirm(
+      `Terjemahkan seluruh ${ebook.bab.length} bab ke Bahasa Indonesia sastra dengan Gemini AI? Proses ini akan menerjemahkan bab satu per satu secara berurutan.`
+    );
+    if (!confirmed) return;
+
+    setIsBatchTranslating(true);
+    setBatchTranslateProgress({ current: 0, total: ebook.bab.length });
+
+    try {
+      let currentBabList = [...ebook.bab];
+
+      for (let i = 0; i < currentBabList.length; i++) {
+        setBatchTranslateProgress({ current: i + 1, total: currentBabList.length });
+        const ch = currentBabList[i];
+
+        try {
+          const res = await translateStoryToIndonesian({
+            text: ch.teks,
+            title: ch.judul_bab,
+            style: 'sastra',
+          });
+
+          if (res?.translatedText) {
+            currentBabList[i] = {
+              ...ch,
+              judul_bab: res.translatedTitle || ch.judul_bab,
+              teks: res.translatedText,
+              jumlah_kata: res.translatedWordCount,
+              audio_status: 'idle',
+              audio_url: undefined,
+            };
+
+            const interimEbook: EbookData = {
+              ...ebook,
+              bab: currentBabList,
+              total_kata: currentBabList.reduce((acc, c) => acc + c.jumlah_kata, 0),
+            };
+            setEbook(interimEbook);
+          }
+        } catch (itemErr: any) {
+          console.error(`Gagal menerjemahkan Bab ${ch.nomor}:`, itemErr);
+        }
+      }
+
+      const finalEbook: EbookData = {
+        ...ebook,
+        bab: currentBabList,
+        total_kata: currentBabList.reduce((acc, c) => acc + c.jumlah_kata, 0),
+      };
+
+      setEbook(finalEbook);
+      if (onPersistToDb) {
+        onPersistToDb(finalEbook);
+      }
+    } catch (err: any) {
+      alert('Terjadi kesalahan saat batch terjemahan: ' + (err.message || err));
+    } finally {
+      setIsBatchTranslating(false);
+    }
+  };
 
   const audioReadyCount = ebook.bab.filter((b) => b.audio_url && b.audio_status === 'ready').length;
 
@@ -144,11 +248,34 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
+            {/* Batch Translate to Indonesian button */}
+            <button
+              id="batch-translate-book-btn"
+              onClick={handleBatchTranslateAll}
+              disabled={isBatchTranslating || isBatchGenerating || ebook.bab.length === 0}
+              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border border-amber-300 shadow-xs disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
+              title="Terjemahkan seluruh naskah bab ke Bahasa Indonesia sastra dengan Gemini AI"
+            >
+              {isBatchTranslating ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin text-amber-700" />
+                  <span>
+                    Menerjemahkan Bab {batchTranslateProgress.current} dari {batchTranslateProgress.total}...
+                  </span>
+                </>
+              ) : (
+                <>
+                  <Languages className="w-4 h-4 text-amber-700" />
+                  <span>Terjemahkan Semua Bab ke Indonesia</span>
+                </>
+              )}
+            </button>
+
             <button
               id="batch-generate-audio-btn"
               onClick={onGenerateAllAudio}
-              disabled={isBatchGenerating || audioReadyCount === ebook.bab.length}
-              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-xs disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              disabled={isBatchGenerating || isBatchTranslating || audioReadyCount === ebook.bab.length}
+              className="inline-flex items-center gap-2 px-4 py-2 text-xs font-semibold rounded-xl bg-amber-600 hover:bg-amber-700 text-white shadow-xs disabled:opacity-50 disabled:cursor-not-allowed transition-all cursor-pointer"
             >
               {isBatchGenerating ? (
                 <>
@@ -169,8 +296,8 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
               )}
             </button>
 
-            {/* Direct Save to Supabase button */}
-            {isSupabaseConnected && onSaveToDatabase && (
+            {/* Direct Save to Supabase or Local Storage button */}
+            {onSaveToDatabase && (
               <button
                 id="manager-save-db-btn"
                 onClick={onSaveToDatabase}
@@ -180,7 +307,7 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
                     ? 'bg-emerald-50 text-emerald-800 border-emerald-300'
                     : 'border-neutral-300 bg-white text-neutral-700 hover:bg-neutral-50 shadow-xs'
                 }`}
-                title="Simpan buku dan bab ke database Supabase"
+                title="Simpan buku dan bab ke database Supabase atau Penyimpanan Lokal"
               >
                 {isSavingToDb ? (
                   <>
@@ -403,8 +530,8 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
                         <button
                           id={`generate-audio-${chapter.id}`}
                           onClick={() => onGenerateAudioForChapter(chapter.id)}
-                          disabled={isGeneratingThis || isBatchGenerating}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-neutral-100 text-neutral-700 hover:bg-neutral-200 hover:text-neutral-900 border border-neutral-200 disabled:opacity-50 transition-colors"
+                          disabled={isGeneratingThis || isBatchGenerating || isBatchTranslating}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-neutral-100 text-neutral-700 hover:bg-neutral-200 hover:text-neutral-900 border border-neutral-200 disabled:opacity-50 transition-colors cursor-pointer"
                         >
                           {isGeneratingThis ? (
                             <>
@@ -419,6 +546,19 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
                           )}
                         </button>
                       )}
+
+                      {/* Translate Chapter Button */}
+                      <button
+                        type="button"
+                        id={`translate-chapter-${chapter.id}`}
+                        onClick={() => setChapterToTranslate(chapter)}
+                        disabled={isBatchTranslating}
+                        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-neutral-100 text-neutral-700 hover:bg-amber-50 hover:text-amber-800 border border-neutral-200 hover:border-amber-200 transition-colors cursor-pointer"
+                        title="Terjemahkan bab ini ke Bahasa Indonesia dengan sastrawan Gemini AI"
+                      >
+                        <Languages className="w-3.5 h-3.5 text-neutral-500" />
+                        <span className="hidden sm:inline">Terjemahkan</span>
+                      </button>
 
                       {/* Read in E-Reader */}
                       <button
@@ -473,6 +613,17 @@ export const ChapterManager: React.FC<ChapterManagerProps> = ({
           </button>
         )}
       </div>
+
+      {/* Chapter Translation Modal */}
+      {chapterToTranslate && (
+        <TranslationModal
+          isOpen={Boolean(chapterToTranslate)}
+          onClose={() => setChapterToTranslate(null)}
+          originalText={chapterToTranslate.teks}
+          originalTitle={chapterToTranslate.judul_bab}
+          onApplyTranslation={handleApplyChapterTranslation}
+        />
+      )}
     </div>
   );
 };

@@ -14,7 +14,10 @@ import {
   Maximize2,
   ListOrdered,
   Database,
+  Languages,
 } from 'lucide-react';
+import { TranslationModal } from './TranslationModal';
+import { detectLikelyForeignLanguage } from '../services/translationService';
 
 export type SplitMode =
   | 'parts_auto'
@@ -72,6 +75,24 @@ export const TextInputView: React.FC<TextInputViewProps> = ({
 }) => {
   const [dragOver, setDragOver] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isTranslationModalOpen, setIsTranslationModalOpen] = useState<boolean>(false);
+  const [translationSuccessToast, setTranslationSuccessToast] = useState<boolean>(false);
+
+  const foreignDetection = detectLikelyForeignLanguage(inputText);
+
+  const handleApplyTranslation = (translatedText: string, translatedTitle?: string) => {
+    setInputText(translatedText);
+    if (translatedTitle) {
+      if (!chapterTitle || chapterTitle.toLowerCase().includes('chapter') || chapterTitle === bookTitle) {
+        setChapterTitle(translatedTitle);
+      }
+      if (!bookTitle) {
+        setBookTitle(translatedTitle);
+      }
+    }
+    setTranslationSuccessToast(true);
+    setTimeout(() => setTranslationSuccessToast(false), 4000);
+  };
 
   const maxWords = 15000;
   const wordPercentage = Math.min(100, Math.round((wordCount / maxWords) * 100));
@@ -150,9 +171,21 @@ export const TextInputView: React.FC<TextInputViewProps> = ({
 
           <div className="shrink-0 flex flex-wrap items-center gap-2">
             <button
+              type="button"
+              id="translate-story-trigger"
+              onClick={() => setIsTranslationModalOpen(true)}
+              disabled={!inputText.trim()}
+              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border border-amber-300 shadow-xs transition-colors disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              title="Terjemahkan cerita yang diunggah ke Bahasa Indonesia"
+            >
+              <Languages className="w-4 h-4 text-amber-700" />
+              <span>Terjemahkan ke Indonesia</span>
+            </button>
+
+            <button
               id="upload-file-trigger"
               onClick={() => fileInputRef.current?.click()}
-              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl border border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-50 shadow-xs transition-colors"
+              className="inline-flex items-center gap-2 px-3.5 py-2 text-xs font-semibold rounded-xl border border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-50 shadow-xs transition-colors cursor-pointer"
             >
               <Upload className="w-4 h-4 text-neutral-500" />
               <span>Unggah File (.txt / .md)</span>
@@ -169,7 +202,7 @@ export const TextInputView: React.FC<TextInputViewProps> = ({
               <button
                 id="reset-polosan-btn"
                 onClick={onResetAll}
-                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-xl text-neutral-500 hover:text-red-600 hover:bg-red-50 border border-neutral-200 transition-colors"
+                className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium rounded-xl text-neutral-500 hover:text-red-600 hover:bg-red-50 border border-neutral-200 transition-colors cursor-pointer"
                 title="Hapus buku dan mulai dari awal polosan"
               >
                 <RotateCcw className="w-3.5 h-3.5" />
@@ -370,6 +403,44 @@ export const TextInputView: React.FC<TextInputViewProps> = ({
           />
         </div>
 
+        {/* Translation Notification Banner when foreign text is detected */}
+        {foreignDetection.isLikelyForeign && inputText.trim().length > 40 && (
+          <div className="mx-4 sm:mx-5 mt-4 p-3.5 rounded-xl bg-amber-50 border border-amber-300 text-amber-950 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-amber-600 text-white flex items-center justify-center shrink-0">
+                <Languages className="w-4 h-4" />
+              </div>
+              <div>
+                <p className="font-bold text-neutral-900">
+                  Naskah terdeteksi dalam Bahasa {foreignDetection.languageHint}
+                </p>
+                <p className="text-neutral-600 mt-0.5">
+                  Ingin menerjemahkan naskah ini ke Bahasa Indonesia yang mengalir alami sebelum memproses bab?
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              id="translate-foreign-detected-btn"
+              onClick={() => setIsTranslationModalOpen(true)}
+              className="inline-flex items-center justify-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-600 hover:bg-amber-700 text-white font-bold text-xs shadow-xs transition-all shrink-0 cursor-pointer"
+            >
+              <Languages className="w-3.5 h-3.5" />
+              <span>Terjemahkan ke Indonesia</span>
+            </button>
+          </div>
+        )}
+
+        {/* Success toast after translation */}
+        {translationSuccessToast && (
+          <div className="mx-4 sm:mx-5 mt-4 p-3 rounded-xl bg-emerald-50 border border-emerald-300 text-emerald-900 text-xs flex items-center gap-2 animate-in fade-in">
+            <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span className="font-semibold">
+              Naskah cerita berhasil diterjemahkan ke Bahasa Indonesia! Teks editor kini sudah diperbarui.
+            </span>
+          </div>
+        )}
+
         {/* Drop zone & Textarea */}
         <div
           onDragOver={(e) => {
@@ -504,6 +575,16 @@ Jika memilih "Bagi Part Otomatis", teks panjang ini akan dibagi menjadi Bab ${ch
           </div>
         </div>
       </div>
+
+      {/* Story Translation Modal */}
+      <TranslationModal
+        isOpen={isTranslationModalOpen}
+        onClose={() => setIsTranslationModalOpen(false)}
+        originalText={inputText}
+        originalTitle={chapterTitle || bookTitle}
+        onApplyTranslation={handleApplyTranslation}
+        initialSourceLanguageHint={foreignDetection.languageHint}
+      />
     </div>
   );
 };

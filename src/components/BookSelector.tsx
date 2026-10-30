@@ -133,28 +133,7 @@ export const BookSelector: React.FC<BookSelectorProps> = ({
 
           {/* Book List Content */}
           <div className="max-h-72 overflow-y-auto space-y-1 py-1 pr-1 custom-scrollbar">
-            {!isSupabaseConnected ? (
-              <div className="p-3 text-center rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 my-1">
-                <Database className="w-6 h-6 text-amber-600 mx-auto mb-1.5 opacity-80" />
-                <p className="text-xs font-semibold text-amber-900 dark:text-amber-200 mb-1">
-                  Supabase Belum Terhubung
-                </p>
-                <p className="text-[11px] text-amber-700 dark:text-amber-400 mb-2">
-                  Hubungkan database Supabase untuk memuat daftar buku tersimpan secara otomatis di semua perangkat.
-                </p>
-                {onOpenSupabaseConfig && (
-                  <button
-                    onClick={() => {
-                      setIsOpen(false);
-                      onOpenSupabaseConfig();
-                    }}
-                    className="inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-amber-600 text-white font-medium hover:bg-amber-700"
-                  >
-                    Atur Supabase
-                  </button>
-                )}
-              </div>
-            ) : isLoading ? (
+            {isLoading ? (
               <div className="p-4 text-center">
                 <RefreshCw className="w-5 h-5 text-amber-600 animate-spin mx-auto mb-1.5" />
                 <p className="text-xs text-neutral-500">Memuat koleksi buku...</p>
@@ -166,8 +145,19 @@ export const BookSelector: React.FC<BookSelectorProps> = ({
                   Belum ada buku tersimpan
                 </p>
                 <p className="text-[11px] text-neutral-400 mt-0.5">
-                  Tempel naskah cerita dan simpan untuk mulai membaca.
+                  Simpan naskah bab untuk langsung mulai membaca di sini.
                 </p>
+                {!isSupabaseConnected && onOpenSupabaseConfig && (
+                  <button
+                    onClick={() => {
+                      setIsOpen(false);
+                      onOpenSupabaseConfig();
+                    }}
+                    className="mt-2.5 inline-flex items-center gap-1 text-xs px-2.5 py-1 rounded bg-amber-600 text-white font-medium hover:bg-amber-700"
+                  >
+                    Atur Supabase
+                  </button>
+                )}
               </div>
             ) : (
               books.map((b) => {

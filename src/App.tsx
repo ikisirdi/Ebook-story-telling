@@ -129,20 +129,16 @@ export default function App() {
     }
   }, [playbackSpeed]);
 
-  // Fetch and deduplicate books from Supabase
+  // Fetch and deduplicate books from Supabase or Local Storage
   const refreshSavedBooks = async () => {
-    if (!isSupabaseConfigured()) {
-      setIsSupabaseReady(false);
-      return;
-    }
-    setIsSupabaseReady(true);
     setIsLoadingBooks(true);
     try {
       // fetchBooksList automatically deduplicates same titles to 1 latest book
+      // and falls back gracefully to local storage if Supabase is down or paused
       const list = await fetchBooksList(true);
       setSavedBooks(list);
-    } catch (err) {
-      console.error('Failed to fetch books in App:', err);
+    } catch (err: any) {
+      console.warn('Catatan saat memuat buku:', err?.message || err);
     } finally {
       setIsLoadingBooks(false);
     }
@@ -150,11 +146,12 @@ export default function App() {
 
   // Sync Supabase config from server across devices on mount
   useEffect(() => {
+    // Initial fetch of books (local + remote)
+    refreshSavedBooks();
+
     syncSupabaseConfigFromServer().then((hasConfig) => {
-      if (hasConfig || isSupabaseConfigured()) {
-        setIsSupabaseReady(true);
-        refreshSavedBooks();
-      }
+      setIsSupabaseReady(hasConfig || isSupabaseConfigured());
+      refreshSavedBooks();
     });
 
     const handleCredUpdate = () => {
@@ -170,9 +167,9 @@ export default function App() {
     };
   }, []);
 
-  // Persist current ebook state to Supabase Cloud Database
+  // Persist current ebook state to Supabase Cloud Database or Local Storage
   const persistEbookToSupabase = async (targetEbook: EbookData): Promise<string | null> => {
-    if (!isSupabaseConfigured() || !targetEbook.bab || targetEbook.bab.length === 0) {
+    if (!targetEbook.bab || targetEbook.bab.length === 0) {
       return null;
     }
     setIsSavingToDb(true);
@@ -182,18 +179,19 @@ export default function App() {
         targetEbook.id = res.bookId;
         setEbook((prev) => ({ ...prev, id: res.bookId }));
         setDbSaveSuccess(true);
-        setSaveToast(`✓ Buku "${targetEbook.judul || 'Tanpa Judul'}" (${targetEbook.bab.length} bab) tersimpan di Supabase!`);
+        const destination = res.isLocal ? 'Penyimpanan Lokal' : 'Supabase';
+        setSaveToast(`✓ Buku "${targetEbook.judul || 'Tanpa Judul'}" (${targetEbook.bab.length} bab) tersimpan di ${destination}!`);
         refreshSavedBooks();
         setTimeout(() => setDbSaveSuccess(null), 4000);
         setTimeout(() => setSaveToast(null), 4000);
         return res.bookId;
       } else {
-        console.warn('Auto-save to Supabase failed:', res.error);
+        console.warn('Penyimpanan buku:', res.error || res.warning);
         setDbSaveSuccess(false);
         setTimeout(() => setDbSaveSuccess(null), 4000);
       }
-    } catch (err) {
-      console.error('Auto-save error:', err);
+    } catch (err: any) {
+      console.warn('Catatan simpan buku:', err?.message || err);
       setDbSaveSuccess(false);
       setTimeout(() => setDbSaveSuccess(null), 4000);
     } finally {
@@ -406,6 +404,20 @@ export default function App() {
     setEbook(updatedEbook);
     setCurrentChapterIndex(chapterIndex);
 
+    if (isSupabaseConfigured()) {
+      persistEbookToSupabase(updatedEbook);
+    }
+  };
+
+  // Update specific chapter fields (e.g., text/title from translation)
+  const handleUpdateChapter = (chapterId: string, updatedFields: Partial<ChapterData>) => {
+    const updatedBab = ebook.bab.map((b) => (b.id === chapterId ? { ...b, ...updatedFields } : b));
+    const updatedEbook: EbookData = {
+      ...ebook,
+      bab: updatedBab,
+      total_kata: updatedBab.reduce((acc, c) => acc + c.jumlah_kata, 0),
+    };
+    setEbook(updatedEbook);
     if (isSupabaseConfigured()) {
       persistEbookToSupabase(updatedEbook);
     }
@@ -785,6 +797,7 @@ export default function App() {
             isSavingToDb={isSavingToDb}
             dbSaveSuccess={dbSaveSuccess}
             onSaveToDatabase={() => persistEbookToSupabase(ebook)}
+            onUpdateChapter={handleUpdateChapter}
           />
         )}
       </div>

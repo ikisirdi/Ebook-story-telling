@@ -27,8 +27,37 @@ function notifyConfigListeners() {
   });
 }
 
+export function isLocalModeOnly(): boolean {
+  if (typeof window === 'undefined') return false;
+  return (
+    localStorage.getItem('supabase_mode') === 'local' ||
+    localStorage.getItem('supabase_disabled') === 'true'
+  );
+}
+
+export function setLocalModeOnly(enabled: boolean): void {
+  if (typeof window === 'undefined') return;
+  if (enabled) {
+    localStorage.setItem('supabase_mode', 'local');
+    localStorage.setItem('supabase_disabled', 'true');
+    serverSyncedUrl = '';
+    serverSyncedKey = '';
+  } else {
+    localStorage.removeItem('supabase_mode');
+    localStorage.removeItem('supabase_disabled');
+  }
+  supabaseInstance = null;
+  lastUrl = '';
+  lastKey = '';
+  notifyConfigListeners();
+}
+
 // Get Supabase credentials from server sync, Vite environment, or localStorage
 export function getSupabaseCredentials(): { url: string; key: string } {
+  if (isLocalModeOnly()) {
+    return { url: '', key: '' };
+  }
+
   const env = (import.meta as any).env || {};
   const envUrl = (env.VITE_SUPABASE_URL as string) || '';
   const envKey = (env.VITE_SUPABASE_ANON_KEY as string) || '';
@@ -49,10 +78,19 @@ export function getSupabaseCredentials(): { url: string; key: string } {
  * Sync Supabase credentials from server so new devices and browsers don't need to re-login
  */
 export async function syncSupabaseConfigFromServer(): Promise<boolean> {
+  if (isLocalModeOnly()) return false;
+
   try {
     const res = await fetch('/api/supabase-config');
     if (!res.ok) return false;
     const data = await res.json();
+
+    if (data && data.disabled) {
+      serverSyncedUrl = '';
+      serverSyncedKey = '';
+      setLocalModeOnly(true);
+      return false;
+    }
 
     if (data && data.configured && data.url && data.key) {
       serverSyncedUrl = String(data.url).trim();
@@ -80,6 +118,11 @@ export async function syncSupabaseConfigFromServer(): Promise<boolean> {
 export function saveSupabaseCredentials(url: string, key: string): void {
   const cleanUrl = url.trim();
   const cleanKey = key.trim();
+
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem('supabase_mode');
+    localStorage.removeItem('supabase_disabled');
+  }
 
   serverSyncedUrl = cleanUrl;
   serverSyncedKey = cleanKey;
@@ -122,12 +165,14 @@ export function clearSupabaseCredentials(): void {
   if (typeof window !== 'undefined') {
     localStorage.removeItem('supabase_project_url');
     localStorage.removeItem('supabase_anon_key');
+    localStorage.setItem('supabase_mode', 'local');
+    localStorage.setItem('supabase_disabled', 'true');
   }
 
   fetch('/api/supabase-config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ reset: true }),
+    body: JSON.stringify({ reset: true, disabled: true }),
   }).catch(() => {});
 
   notifyConfigListeners();

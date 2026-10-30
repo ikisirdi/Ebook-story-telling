@@ -25,10 +25,12 @@ import {
   CheckCircle2,
   FileText,
   Save,
+  Languages,
 } from 'lucide-react';
 import { ChapterData, EbookData } from '../types';
 import { SupabaseBookSummary } from '../services/supabaseService';
 import { BookSelector } from './BookSelector';
+import { TranslationModal } from './TranslationModal';
 
 interface EbookReaderViewProps {
   ebook: EbookData;
@@ -57,6 +59,7 @@ interface EbookReaderViewProps {
   isSavingToDb?: boolean;
   dbSaveSuccess?: boolean | null;
   onSaveToDatabase?: () => void;
+  onUpdateChapter?: (chapterId: string, updatedFields: Partial<ChapterData>) => void;
 }
 
 type ThemeMode = 'light' | 'sepia' | 'dark';
@@ -89,6 +92,7 @@ export const EbookReaderView: React.FC<EbookReaderViewProps> = ({
   isSavingToDb = false,
   dbSaveSuccess = null,
   onSaveToDatabase,
+  onUpdateChapter,
 }) => {
   const [theme, setTheme] = useState<ThemeMode>('light');
   const [fontMode, setFontMode] = useState<FontMode>('serif');
@@ -96,6 +100,7 @@ export const EbookReaderView: React.FC<EbookReaderViewProps> = ({
   const [showToc, setShowToc] = useState<boolean>(false);
   const [volume, setVolume] = useState<number>(1.0);
   const [isMuted, setIsMuted] = useState<boolean>(false);
+  const [isTranslateModalOpen, setIsTranslateModalOpen] = useState<boolean>(false);
 
   if (!ebook.bab || ebook.bab.length === 0) {
     return (
@@ -160,24 +165,24 @@ export const EbookReaderView: React.FC<EbookReaderViewProps> = ({
               ))}
             </div>
           </div>
-        ) : !isSupabaseConnected ? (
-          <div className="w-full max-w-md p-4 mb-6 rounded-xl bg-amber-50 border border-amber-200 text-center">
-            <p className="text-xs font-semibold text-amber-900 mb-1">
-              Koneksi Supabase Belum Aktif
+        ) : (
+          <div className="w-full max-w-md p-4 mb-6 rounded-xl bg-neutral-50 border border-neutral-200 text-center">
+            <p className="text-xs font-semibold text-neutral-800 mb-1">
+              Belum Ada Buku Tersimpan
             </p>
-            <p className="text-xs text-amber-700 mb-3">
-              Hubungkan URL dan Anon Key Supabase agar buku Anda tersimpan dan langsung muncul di semua perangkat.
+            <p className="text-xs text-neutral-500 mb-3">
+              Mulai tulis atau tempel naskah cerita dan simpan buku Anda. Tersedia penyimpanan otomatis di peramban lokal atau database Supabase Cloud.
             </p>
             {onOpenSupabaseModal && (
               <button
                 onClick={onOpenSupabaseModal}
-                className="px-4 py-1.5 rounded-lg text-xs font-semibold bg-amber-600 text-white hover:bg-amber-700"
+                className="px-3.5 py-1.5 rounded-lg text-xs font-semibold border border-neutral-300 hover:bg-neutral-100 text-neutral-700 transition-colors"
               >
-                Konfigurasi Supabase
+                Pengaturan Database Supabase
               </button>
             )}
           </div>
-        ) : null}
+        )}
 
         {onAddNewChapter && (
           <button
@@ -193,6 +198,20 @@ export const EbookReaderView: React.FC<EbookReaderViewProps> = ({
   }
 
   const currentChapter = ebook.bab[currentChapterIndex] || ebook.bab[0];
+
+  const handleApplyReaderTranslation = (translatedText: string, translatedTitle?: string) => {
+    if (!currentChapter) return;
+    const newWords = translatedText.trim().split(/\s+/).filter(Boolean).length;
+    if (onUpdateChapter) {
+      onUpdateChapter(currentChapter.id, {
+        teks: translatedText.trim(),
+        judul_bab: translatedTitle || currentChapter.judul_bab,
+        jumlah_kata: newWords,
+        audio_status: 'idle',
+        audio_url: undefined,
+      });
+    }
+  };
 
   const formatTime = (secs: number) => {
     if (isNaN(secs) || secs < 0) return '0:00';
@@ -470,13 +489,26 @@ export const EbookReaderView: React.FC<EbookReaderViewProps> = ({
                   <button
                     type="button"
                     onClick={() => onSplitChapterIntoParts(currentChapter.id)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300/60 transition-colors ml-1"
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-100 hover:bg-amber-200 text-amber-900 border border-amber-300/60 transition-colors ml-1 cursor-pointer"
                     title="Pecah bab panjang ini menjadi beberapa part audio otomatis (~350 kata per part)"
                   >
                     <Scissors className="w-3 h-3 text-amber-700" />
                     <span>
                       Pecah Jadi Part Suara (~{Math.max(2, Math.round((currentChapter?.jumlah_kata || 0) / 350))} Part)
                     </span>
+                  </button>
+                )}
+
+                {/* Translate current chapter */}
+                {currentChapter && (
+                  <button
+                    type="button"
+                    onClick={() => setIsTranslateModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border border-amber-300/60 transition-colors ml-1 cursor-pointer"
+                    title="Terjemahkan bab ini ke Bahasa Indonesia dengan sastrawan Gemini AI"
+                  >
+                    <Languages className="w-3.5 h-3.5 text-amber-700" />
+                    <span>Terjemahkan ke Indonesia</span>
                   </button>
                 )}
               </div>
@@ -697,6 +729,17 @@ export const EbookReaderView: React.FC<EbookReaderViewProps> = ({
           </div>
         </div>
       </footer>
+
+      {/* Reader Translation Modal */}
+      {currentChapter && (
+        <TranslationModal
+          isOpen={isTranslateModalOpen}
+          onClose={() => setIsTranslateModalOpen(false)}
+          originalText={currentChapter.teks}
+          originalTitle={currentChapter.judul_bab}
+          onApplyTranslation={handleApplyReaderTranslation}
+        />
+      )}
     </div>
   );
 };

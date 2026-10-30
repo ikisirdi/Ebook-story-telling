@@ -21,8 +21,10 @@ import { EbookData } from '../types';
 import {
   getSupabaseCredentials,
   saveSupabaseCredentials,
+  clearSupabaseCredentials,
   isSupabaseConfigured,
-  getSupabaseClient,
+  isLocalModeOnly,
+  setLocalModeOnly,
 } from '../lib/supabase';
 import {
   saveEbookToSupabase,
@@ -30,6 +32,9 @@ import {
   loadEbookWithChapters,
   deleteBookFromSupabase,
   SupabaseBookSummary,
+  getSupabaseHealthStatus,
+  onSupabaseHealthChange,
+  SupabaseHealthStatus,
 } from '../services/supabaseService';
 
 interface SupabaseModalProps {
@@ -111,16 +116,21 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
   const [showAllVersions, setShowAllVersions] = useState<boolean>(false);
   const [isLoadingBooks, setIsLoadingBooks] = useState<boolean>(false);
   const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [healthStatus, setHealthStatus] = useState<SupabaseHealthStatus>(getSupabaseHealthStatus());
   const [statusMessage, setStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    return onSupabaseHealthChange((status) => {
+      setHealthStatus(status);
+    });
+  }, []);
 
   useEffect(() => {
     if (isOpen) {
       const creds = getSupabaseCredentials();
       setSupabaseUrl(creds.url);
       setSupabaseKey(creds.key);
-      if (isSupabaseConfigured()) {
-        loadBooks(showAllVersions);
-      }
+      loadBooks(showAllVersions);
     }
   }, [isOpen]);
 
@@ -128,15 +138,11 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
     setIsLoadingBooks(true);
     setStatusMessage(null);
     try {
-      // deduplicate if all is false
+      // deduplicate if all is false - automatically falls back to local storage
       const books = await fetchBooksList(!all);
       setSavedBooks(books);
     } catch (err: any) {
-      console.error(err);
-      setStatusMessage({
-        type: 'error',
-        text: 'Gagal memuat daftar buku dari Supabase: ' + (err.message || 'Periksa tabel dan URL/Key Anda.'),
-      });
+      console.warn('Load books note:', err?.message || err);
     } finally {
       setIsLoadingBooks(false);
     }
@@ -146,11 +152,39 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
     saveSupabaseCredentials(supabaseUrl, supabaseKey);
     setStatusMessage({
       type: 'success',
-      text: 'Kredensial Supabase berhasil disimpan! Mencoba menghubungkan...',
+      text: 'Kredensial Supabase disimpan! Menghubungkan ke server...',
     });
     setTimeout(() => {
       loadBooks();
     }, 500);
+  };
+
+  const handleClearCredentials = () => {
+    clearSupabaseCredentials();
+    setSupabaseUrl('');
+    setSupabaseKey('');
+    setStatusMessage({
+      type: 'success',
+      text: 'Kredensial dibersihkan. Mode Penyimpanan Lokal (Offline) aktif.',
+    });
+    loadBooks();
+  };
+
+  const handleToggleLocalMode = () => {
+    const willBeLocal = !isLocalModeOnly();
+    setLocalModeOnly(willBeLocal);
+    if (willBeLocal) {
+      setStatusMessage({
+        type: 'success',
+        text: 'Mode Penyimpanan Lokal diaktifkan. Buku disimpan di memori browser tanpa ketergantungan server Cloud.',
+      });
+    } else {
+      setStatusMessage({
+        type: 'success',
+        text: 'Mode Supabase Cloud diaktifkan.',
+      });
+    }
+    loadBooks();
   };
 
   const handleSaveCurrentBook = async () => {
@@ -166,18 +200,22 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
         if (res.bookId) {
           ebook.id = res.bookId;
         }
+        const destination = res.isLocal ? 'Penyimpanan Lokal' : 'Supabase Cloud';
         setStatusMessage({
           type: 'success',
-          text: `Buku "${ebook.judul || 'Tanpa Judul'}" (${ebook.bab.length} bab) berhasil disimpan ke Supabase!`,
+          text: `Buku "${ebook.judul || 'Tanpa Judul'}" (${ebook.bab.length} bab) berhasil disimpan ke ${destination}!`,
         });
         loadBooks();
       } else {
-        throw new Error(res.error || 'Gagal menyimpan buku');
+        setStatusMessage({
+          type: 'error',
+          text: res.error || 'Gagal menyimpan buku',
+        });
       }
     } catch (err: any) {
       setStatusMessage({
         type: 'error',
-        text: err.message || 'Gagal menyimpan ke database Supabase.',
+        text: err?.message || 'Gagal menyimpan ke database Supabase.',
       });
     } finally {
       setIsSaving(false);
@@ -441,24 +479,71 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
                   </div>
                 </div>
 
-                <div className="flex items-center justify-between pt-2">
-                  <span className="text-xs text-neutral-500">
-                    {isSupabaseConfigured() ? (
-                      <span className="text-emerald-600 font-medium flex items-center gap-1">
-                        <CheckCircle2 className="w-3.5 h-3.5" /> Kredensial aktif di aplikasi
-                      </span>
-                    ) : (
-                      'Kredensial dapat dimasukkan di sini atau via file .env'
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-neutral-100">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-neutral-500">
+                      {isLocalModeOnly() ? (
+                        <span className="text-blue-600 font-medium flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Mode Lokal Aktif (Offline)
+                        </span>
+                      ) : isSupabaseConfigured() ? (
+                        <span className="text-emerald-600 font-medium flex items-center gap-1">
+                          <CheckCircle2 className="w-3.5 h-3.5" /> Kredensial aktif di aplikasi
+                        </span>
+                      ) : (
+                        'Kredensial dapat dimasukkan di sini atau via file .env'
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleToggleLocalMode}
+                      className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-neutral-300 hover:bg-neutral-50 text-neutral-700 transition-colors"
+                      title="Alihkan antara penyimpanan browser lokal atau cloud Supabase"
+                    >
+                      {isLocalModeOnly() ? 'Gunakan Supabase Cloud' : 'Beralih ke Mode Lokal'}
+                    </button>
+
+                    {(supabaseUrl || supabaseKey || isSupabaseConfigured()) && (
+                      <button
+                        type="button"
+                        onClick={handleClearCredentials}
+                        className="px-3 py-1.5 text-xs font-semibold rounded-lg text-neutral-500 hover:text-red-600 hover:bg-red-50 border border-neutral-200 transition-colors"
+                        title="Hapus kredensial Supabase dan gunakan mode lokal"
+                      >
+                        Reset Kredensial
+                      </button>
                     )}
-                  </span>
-                  <button
-                    onClick={handleSaveCredentials}
-                    className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs transition-colors"
-                  >
-                    Simpan & Hubungkan
-                  </button>
+
+                    <button
+                      onClick={handleSaveCredentials}
+                      className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 shadow-xs transition-colors"
+                    >
+                      Simpan & Hubungkan
+                    </button>
+                  </div>
                 </div>
               </div>
+
+              {/* Health Notice when Supabase is down or paused */}
+              {healthStatus.isPausedOrDown && (
+                <div className="p-4 bg-amber-50 rounded-xl border border-amber-200 text-xs text-amber-900 flex items-start gap-3 shadow-xs">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="space-y-1">
+                    <strong className="block font-semibold text-amber-950">
+                      Proyek Supabase Sedang Dijeda (Paused) / Server 521
+                    </strong>
+                    <p className="text-amber-800 leading-relaxed">
+                      Server database di <code>{supabaseUrl || 'Supabase'}</code> saat ini tidak merespon (biasanya karena proyek gratis dijeda otomatis oleh Supabase setelah masa inaktif).
+                    </p>
+                    <p className="text-amber-800 leading-relaxed">
+                      Aplikasi <strong>otomatis mengamankan buku Anda di Penyimpanan Lokal</strong> sehingga Anda dapat terus menulis, mengedit, dan membuat audio tanpa gangguan. Anda juga dapat menekan <strong>"Restore project"</strong> di dashboard Supabase jika ingin mengaktifkan kembali cloud.
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Status Banner */}
               {statusMessage && (
@@ -561,10 +646,19 @@ export const SupabaseModal: React.FC<SupabaseModalProps> = ({
                         className="p-3.5 bg-white border border-neutral-200 rounded-xl flex items-center justify-between gap-3 shadow-2xs hover:border-neutral-300 transition-colors"
                       >
                         <div className="min-w-0">
-                          <div className="flex items-center gap-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <h5 className="text-xs sm:text-sm font-bold text-neutral-900 truncate">
                               {b.title}
                             </h5>
+                            {b.is_local ? (
+                              <span className="text-[10px] bg-blue-50 text-blue-700 border border-blue-200 px-1.5 py-0.2 rounded font-medium shrink-0">
+                                Lokal
+                              </span>
+                            ) : (
+                              <span className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-1.5 py-0.2 rounded font-medium shrink-0">
+                                Supabase Cloud
+                              </span>
+                            )}
                             {!showAllVersions && b.duplicate_count && b.duplicate_count > 1 && (
                               <span className="text-[10px] bg-neutral-100 text-neutral-600 px-1.5 py-0.5 rounded font-medium shrink-0">
                                 Versi Terbaru
